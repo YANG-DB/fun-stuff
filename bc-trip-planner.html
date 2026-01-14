@@ -60,6 +60,273 @@
             overflow-y: auto;
         }
 
+        .search-section {
+            margin-bottom: 20px;
+            position: sticky;
+            top: 0;
+            background: #f8f9fa;
+            padding-bottom: 15px;
+            z-index: 10;
+        }
+
+        .search-box {
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 40px 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #999;
+            pointer-events: none;
+        }
+
+        .search-results {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .no-results {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #ffc107;
+            margin-top: 10px;
+        }
+
+        .no-results-text {
+            margin-bottom: 10px;
+            color: #856404;
+        }
+
+        .add-custom-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95em;
+            width: 100%;
+            transition: background 0.3s;
+            margin-bottom: 8px;
+        }
+
+        .add-custom-btn:hover {
+            background: #5568d3;
+        }
+
+        .add-custom-btn.secondary {
+            background: #28a745;
+        }
+
+        .add-custom-btn.secondary:hover {
+            background: #218838;
+        }
+
+        .web-search-results {
+            margin-top: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .web-result-item {
+            background: white;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .web-result-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .web-result-title {
+            font-weight: 600;
+            color: #2c5364;
+            margin-bottom: 5px;
+        }
+
+        .web-result-snippet {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.4;
+            margin-bottom: 5px;
+        }
+
+        .web-result-url {
+            font-size: 0.8em;
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: slideDown 0.3s;
+        }
+
+        @keyframes slideDown {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: #2c5364;
+        }
+
+        .close {
+            font-size: 28px;
+            font-weight: bold;
+            color: #999;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .close:hover {
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1em;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+
+        .btn-cancel {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-cancel:hover {
+            background: #5a6268;
+        }
+
+        .location-item.highlighted {
+            animation: pulse 0.5s;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
         .category {
             margin-bottom: 25px;
         }
@@ -330,6 +597,20 @@
 
         <div class="main-content">
             <div class="sidebar">
+                <div class="search-section">
+                    <div class="search-box">
+                        <input
+                            type="text"
+                            class="search-input"
+                            id="searchInput"
+                            placeholder="Search destinations..."
+                            oninput="handleSearch(this.value)"
+                        />
+                        <span class="search-icon">🔍</span>
+                    </div>
+                    <div id="searchResults" class="search-results"></div>
+                </div>
+
                 <div class="category">
                     <div class="category-header">
                         <span>🏞️ Day Trips (All Family)</span>
@@ -357,6 +638,13 @@
                     </div>
                     <div class="locations" id="weekend-trips"></div>
                 </div>
+
+                <div class="category">
+                    <div class="category-header">
+                        <span>🌲 BC Provincial Parks</span>
+                    </div>
+                    <div class="locations" id="bc-parks"></div>
+                </div>
             </div>
 
             <div class="map-section">
@@ -382,10 +670,150 @@
         </div>
     </div>
 
+    <!-- Add Custom Location Modal -->
+    <div id="addLocationModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>➕ Add Custom Location</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <form id="customLocationForm" onsubmit="handleAddCustomLocation(event)">
+                <div class="form-group">
+                    <label for="locationName">Location Name *</label>
+                    <input type="text" id="locationName" required placeholder="e.g., Shannon Falls">
+                </div>
+
+                <div class="form-group">
+                    <label for="locationCategory">Category *</label>
+                    <select id="locationCategory" required>
+                        <option value="">Select a category</option>
+                        <option value="Day Trip (All Family)">Day Trip (All Family)</option>
+                        <option value="Day Trip (Trails)">Day Trip (Trails)</option>
+                        <option value="Day Trip (City Tour)">Day Trip (City Tour)</option>
+                        <option value="Weekend Trip">Weekend Trip</option>
+                        <option value="BC Provincial Park">BC Provincial Park</option>
+                    </select>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="locationLat">Latitude *</label>
+                        <input type="number" id="locationLat" step="0.000001" required placeholder="49.2827">
+                    </div>
+                    <div class="form-group">
+                        <label for="locationLng">Longitude *</label>
+                        <input type="number" id="locationLng" step="0.000001" required placeholder="-123.1207">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="locationDescription">Description *</label>
+                    <textarea id="locationDescription" required placeholder="Brief description of the location and what makes it special..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="locationSource">Source URL (optional)</label>
+                    <input type="url" id="locationSource" placeholder="https://example.com/location-info">
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Location</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         // Trip destinations data
         const destinations = {
+            bcParks: [
+                {
+                    name: "Garibaldi Provincial Park",
+                    lat: 49.9333,
+                    lng: -123.0000,
+                    description: "Alpine paradise with turquoise Garibaldi Lake, Black Tusk peak, and numerous hiking trails. Popular overnight destination.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Golden Ears Provincial Park",
+                    lat: 49.4228,
+                    lng: -122.4897,
+                    description: "Large park with camping, swimming at Alouette Lake, and challenging hiking trails including Golden Ears summit.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Cypress Provincial Park",
+                    lat: 49.3833,
+                    lng: -123.2000,
+                    description: "Year-round recreation with skiing, snowshoeing in winter and hiking in summer. Easy access from Vancouver.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Mount Seymour Provincial Park",
+                    lat: 49.3667,
+                    lng: -122.9500,
+                    description: "Winter skiing and summer hiking with stunning views. Dog Mountain and other trails are family-friendly.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Porteau Cove Provincial Park",
+                    lat: 49.5525,
+                    lng: -123.2403,
+                    description: "Oceanside camping with stunning views of Howe Sound. Popular for diving, kayaking, and sunsets.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Alice Lake Provincial Park",
+                    lat: 49.7722,
+                    lng: -123.1233,
+                    description: "Four pristine lakes with swimming, canoeing, camping, and easy hiking trails. Great for families near Squamish.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Joffre Lakes Provincial Park",
+                    lat: 50.3734,
+                    lng: -122.4897,
+                    description: "Three stunning turquoise glacial lakes. Moderate 10km round-trip hike with incredible photo opportunities.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Brandywine Falls Provincial Park",
+                    lat: 50.0400,
+                    lng: -123.1214,
+                    description: "Spectacular 70-meter waterfall accessible via short easy trail. Perfect for quick stop between Vancouver and Whistler.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Stawamus Chief Provincial Park",
+                    lat: 49.6833,
+                    lng: -123.1500,
+                    description: "Iconic granite monolith with challenging hiking trails offering panoramic views of Squamish and Howe Sound.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Shannon Falls Provincial Park",
+                    lat: 49.6722,
+                    lng: -123.1508,
+                    description: "BC's third highest waterfall at 335 meters. Easy 5-minute walk from parking lot to viewing platform.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "Cultus Lake Provincial Park",
+                    lat: 49.0500,
+                    lng: -121.9833,
+                    description: "Popular summer destination with lake swimming, water sports, camping, and multiple beaches. 1.5 hours from Vancouver.",
+                    category: "BC Provincial Park"
+                },
+                {
+                    name: "E.C. Manning Provincial Park",
+                    lat: 49.0667,
+                    lng: -120.7833,
+                    description: "Year-round park with alpine meadows, wildlife viewing, skiing, and hiking. Gateway to the Cascade Mountains.",
+                    category: "BC Provincial Park"
+                }
+            ],
             dayTripsAll: [
                 {
                     name: "Capilano Suspension Bridge",
@@ -572,16 +1000,18 @@
             maxZoom: 18
         }).addTo(map);
 
-        // Store markers
+        // Store markers and custom locations
         const markers = {};
         let selectedLocations = [];
+        let customLocations = [];
 
         // Color coding for categories
         const categoryColors = {
             'Day Trip (All Family)': '#4caf50',
             'Day Trip (Trails)': '#ff9800',
             'Day Trip (City Tour)': '#2196f3',
-            'Weekend Trip': '#9c27b0'
+            'Weekend Trip': '#9c27b0',
+            'BC Provincial Park': '#2e7d32'
         };
 
         // Create custom icons
@@ -846,16 +1276,430 @@
             event.target.value = '';
         }
 
+        // Get all locations including custom ones
+        function getAllLocations() {
+            return [
+                ...destinations.dayTripsAll,
+                ...destinations.dayTripsTrails,
+                ...destinations.dayTripsCity,
+                ...destinations.weekendTrips,
+                ...destinations.bcParks,
+                ...customLocations
+            ];
+        }
+
+        // Search functionality
+        function handleSearch(query) {
+            const resultsDiv = document.getElementById('searchResults');
+            const allCategories = document.querySelectorAll('.category');
+
+            if (!query.trim()) {
+                resultsDiv.innerHTML = '';
+                allCategories.forEach(cat => cat.style.display = 'block');
+                document.querySelectorAll('.location-item').forEach(item => {
+                    item.style.display = 'flex';
+                    item.classList.remove('highlighted');
+                });
+                return;
+            }
+
+            const searchTerm = query.toLowerCase();
+            const allLocations = getAllLocations();
+            const matches = allLocations.filter(loc =>
+                loc.name.toLowerCase().includes(searchTerm) ||
+                loc.description.toLowerCase().includes(searchTerm) ||
+                loc.category.toLowerCase().includes(searchTerm)
+            );
+
+            if (matches.length > 0) {
+                resultsDiv.innerHTML = `<div style="color: #4caf50;">Found ${matches.length} location(s)</div>`;
+
+                // Hide all items first
+                document.querySelectorAll('.location-item').forEach(item => {
+                    item.style.display = 'none';
+                    item.classList.remove('highlighted');
+                });
+
+                // Show and highlight matches
+                matches.forEach(match => {
+                    const locationItems = document.querySelectorAll('.location-name');
+                    locationItems.forEach(item => {
+                        if (item.textContent === match.name) {
+                            const locationItem = item.closest('.location-item');
+                            locationItem.style.display = 'flex';
+                            locationItem.classList.add('highlighted');
+                        }
+                    });
+                });
+
+                // Show/hide categories based on matches
+                allCategories.forEach(cat => {
+                    const visibleItems = cat.querySelectorAll('.location-item[style*="display: flex"]');
+                    cat.style.display = visibleItems.length > 0 ? 'block' : 'none';
+                });
+            } else {
+                resultsDiv.innerHTML = `
+                    <div class="no-results">
+                        <div class="no-results-text">No locations found for "${query}"</div>
+                        <button class="add-custom-btn secondary" onclick="searchWeb('${query.replace(/'/g, "\\'")}')">
+                            🌐 Search Web for "${query}"
+                        </button>
+                        <button class="add-custom-btn" onclick="openAddLocationModal('${query.replace(/'/g, "\\'")}')">
+                            ➕ Add Custom Location
+                        </button>
+                    </div>
+                    <div id="webSearchResults" class="web-search-results"></div>
+                `;
+
+                // Hide all
+                allCategories.forEach(cat => cat.style.display = 'none');
+            }
+        }
+
+        // Web search functionality
+        async function searchWeb(query) {
+            const webResultsDiv = document.getElementById('webSearchResults');
+            webResultsDiv.innerHTML = '<div class="loading">Searching the web</div>';
+
+            try {
+                // Using DuckDuckGo Instant Answer API
+                const searchQuery = encodeURIComponent(`${query} British Columbia Canada tourism attractions`);
+                const response = await fetch(`https://api.duckduckgo.com/?q=${searchQuery}&format=json&no_html=1&skip_disambig=1`);
+                const data = await response.json();
+
+                // Try to get results from RelatedTopics
+                let results = [];
+                if (data.RelatedTopics && data.RelatedTopics.length > 0) {
+                    results = data.RelatedTopics
+                        .filter(topic => topic.Text && topic.FirstURL)
+                        .slice(0, 5)
+                        .map(topic => ({
+                            title: topic.Text.split(' - ')[0] || query,
+                            snippet: topic.Text,
+                            url: topic.FirstURL
+                        }));
+                }
+
+                if (results.length === 0) {
+                    // Fallback: provide manual search links
+                    webResultsDiv.innerHTML = `
+                        <div style="background: white; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                            <div style="margin-bottom: 10px; color: #666;">Search manually on these sites:</div>
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                <a href="https://www.google.com/search?q=${encodeURIComponent(query + ' BC British Columbia')}"
+                                   target="_blank"
+                                   class="web-result-item"
+                                   style="text-decoration: none; display: block;">
+                                    <div class="web-result-title">🔍 Google Search</div>
+                                    <div class="web-result-snippet">Search for "${query}" on Google</div>
+                                </a>
+                                <a href="https://www.tripadvisor.com/Search?q=${encodeURIComponent(query + ' BC')}"
+                                   target="_blank"
+                                   class="web-result-item"
+                                   style="text-decoration: none; display: block;">
+                                    <div class="web-result-title">✈️ TripAdvisor</div>
+                                    <div class="web-result-snippet">Find reviews and information on TripAdvisor</div>
+                                </a>
+                                <a href="https://www.hellobc.com/search/?q=${encodeURIComponent(query)}"
+                                   target="_blank"
+                                   class="web-result-item"
+                                   style="text-decoration: none; display: block;">
+                                    <div class="web-result-title">🍁 Hello BC (Tourism BC)</div>
+                                    <div class="web-result-snippet">Official BC tourism website</div>
+                                </a>
+                                <a href="https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(query + ' British Columbia')}"
+                                   target="_blank"
+                                   class="web-result-item"
+                                   style="text-decoration: none; display: block;">
+                                    <div class="web-result-title">📚 Wikipedia</div>
+                                    <div class="web-result-snippet">Search Wikipedia for information</div>
+                                </a>
+                            </div>
+                            <div style="margin-top: 15px; padding: 10px; background: #e3f2fd; border-radius: 6px; font-size: 0.9em;">
+                                💡 <strong>Tip:</strong> Once you find the location online:
+                                <ol style="margin: 8px 0 0 20px; line-height: 1.6;">
+                                    <li>Note the location name and details</li>
+                                    <li>Right-click on Google Maps to get coordinates</li>
+                                    <li>Click "Add Custom Location" below to add it</li>
+                                </ol>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    // Display results
+                    const resultsHTML = results.map(result => `
+                        <div class="web-result-item" onclick="window.open('${result.url}', '_blank')">
+                            <div class="web-result-title">${escapeHtml(result.title)}</div>
+                            <div class="web-result-snippet">${escapeHtml(result.snippet)}</div>
+                            <a href="${result.url}" target="_blank" class="web-result-url" onclick="event.stopPropagation()">
+                                ${result.url}
+                            </a>
+                        </div>
+                    `).join('');
+
+                    webResultsDiv.innerHTML = `
+                        <div style="margin-top: 10px;">
+                            <div style="color: #4caf50; margin-bottom: 10px; font-weight: 500;">Web Search Results:</div>
+                            ${resultsHTML}
+                            <div style="margin-top: 15px; padding: 10px; background: #e3f2fd; border-radius: 6px; font-size: 0.9em;">
+                                💡 <strong>Tip:</strong> Click a result to learn more, then use "Add Custom Location" to add it to your trip planner.
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                // Fallback to manual search links
+                webResultsDiv.innerHTML = `
+                    <div style="background: white; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                        <div style="margin-bottom: 10px; color: #666;">Search manually on these sites:</div>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <a href="https://www.google.com/search?q=${encodeURIComponent(query + ' BC British Columbia')}"
+                               target="_blank"
+                               class="web-result-item"
+                               style="text-decoration: none; display: block;">
+                                <div class="web-result-title">🔍 Google Search</div>
+                                <div class="web-result-snippet">Search for "${query}" on Google</div>
+                            </a>
+                            <a href="https://www.tripadvisor.com/Search?q=${encodeURIComponent(query + ' BC')}"
+                               target="_blank"
+                               class="web-result-item"
+                               style="text-decoration: none; display: block;">
+                                <div class="web-result-title">✈️ TripAdvisor</div>
+                                <div class="web-result-snippet">Find reviews and information on TripAdvisor</div>
+                            </a>
+                            <a href="https://www.hellobc.com/search/?q=${encodeURIComponent(query)}"
+                               target="_blank"
+                               class="web-result-item"
+                               style="text-decoration: none; display: block;">
+                                <div class="web-result-title">🍁 Hello BC (Tourism BC)</div>
+                                <div class="web-result-snippet">Official BC tourism website</div>
+                            </a>
+                            <a href="https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(query + ' British Columbia')}"
+                               target="_blank"
+                               class="web-result-item"
+                               style="text-decoration: none; display: block;">
+                                <div class="web-result-title">📚 Wikipedia</div>
+                                <div class="web-result-snippet">Search Wikipedia for information</div>
+                            </a>
+                        </div>
+                        <div style="margin-top: 15px; padding: 10px; background: #e3f2fd; border-radius: 6px; font-size: 0.9em;">
+                            💡 <strong>Tip:</strong> Once you find the location online:
+                            <ol style="margin: 8px 0 0 20px; line-height: 1.6;">
+                                <li>Note the location name and details</li>
+                                <li>Right-click on Google Maps to get coordinates</li>
+                                <li>Click "Add Custom Location" below to add it</li>
+                            </ol>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // Modal functions
+        function openAddLocationModal(searchQuery = '') {
+            const modal = document.getElementById('addLocationModal');
+            modal.style.display = 'block';
+
+            if (searchQuery) {
+                document.getElementById('locationName').value = searchQuery;
+            }
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('addLocationModal');
+            modal.style.display = 'none';
+            document.getElementById('customLocationForm').reset();
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('addLocationModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+
+        // Handle adding custom location
+        function handleAddCustomLocation(event) {
+            event.preventDefault();
+
+            const name = document.getElementById('locationName').value.trim();
+            const category = document.getElementById('locationCategory').value;
+            const lat = parseFloat(document.getElementById('locationLat').value);
+            const lng = parseFloat(document.getElementById('locationLng').value);
+            const description = document.getElementById('locationDescription').value.trim();
+            const source = document.getElementById('locationSource').value.trim();
+
+            // Check for duplicates
+            const allLocations = getAllLocations();
+            if (allLocations.some(loc => loc.name.toLowerCase() === name.toLowerCase())) {
+                alert('A location with this name already exists!');
+                return;
+            }
+
+            // Validate coordinates
+            if (lat < 47 || lat > 60 || lng < -140 || lng > -110) {
+                if (!confirm('The coordinates seem outside BC. Continue anyway?')) {
+                    return;
+                }
+            }
+
+            // Create new location
+            const newLocation = {
+                name,
+                lat,
+                lng,
+                description,
+                category,
+                source,
+                custom: true
+            };
+
+            customLocations.push(newLocation);
+
+            // Add marker to map
+            const marker = L.marker([lat, lng], {
+                icon: createIcon(category)
+            }).addTo(map);
+
+            marker.bindPopup(`
+                <div class="popup-title">${name}</div>
+                <div class="popup-category">${category} (Custom)</div>
+                <div class="popup-description">${description}</div>
+                ${source ? `<div style="margin-top: 8px;"><a href="${source}" target="_blank" style="color: #667eea;">🔗 Source</a></div>` : ''}
+            `);
+
+            markers[name] = marker;
+
+            // Add to appropriate sidebar category
+            const categoryMap = {
+                'Day Trip (All Family)': 'day-trips-all',
+                'Day Trip (Trails)': 'day-trips-trails',
+                'Day Trip (City Tour)': 'day-trips-city',
+                'Weekend Trip': 'weekend-trips',
+                'BC Provincial Park': 'bc-parks'
+            };
+
+            const containerId = categoryMap[category];
+            const container = document.getElementById(containerId);
+            const item = document.createElement('div');
+            item.className = 'location-item';
+            item.innerHTML = `
+                <span class="location-name">${name} ⭐</span>
+                <button class="add-btn" onclick="toggleLocation('${name}')">Add</button>
+            `;
+            item.onclick = (e) => {
+                if (e.target.tagName !== 'BUTTON') {
+                    markers[name].openPopup();
+                    map.setView([lat, lng], 13);
+                }
+            };
+            container.appendChild(item);
+
+            // Close modal and show success
+            closeModal();
+            alert(`✅ "${name}" has been added successfully!`);
+
+            // Focus on the new location
+            map.setView([lat, lng], 13);
+            marker.openPopup();
+
+            // Clear search
+            document.getElementById('searchInput').value = '';
+            handleSearch('');
+        }
+
         // Initialize
         addMarkers(destinations.dayTripsAll, 'Day Trip (All Family)');
         addMarkers(destinations.dayTripsTrails, 'Day Trip (Trails)');
         addMarkers(destinations.dayTripsCity, 'Day Trip (City Tour)');
         addMarkers(destinations.weekendTrips, 'Weekend Trip');
+        addMarkers(destinations.bcParks, 'BC Provincial Park');
 
         populateSidebar('day-trips-all', destinations.dayTripsAll);
         populateSidebar('day-trips-trails', destinations.dayTripsTrails);
         populateSidebar('day-trips-city', destinations.dayTripsCity);
         populateSidebar('weekend-trips', destinations.weekendTrips);
+        populateSidebar('bc-parks', destinations.bcParks);
+
+        // Load custom locations from localStorage if available
+        const savedCustomLocations = localStorage.getItem('customLocations');
+        if (savedCustomLocations) {
+            try {
+                const loaded = JSON.parse(savedCustomLocations);
+                loaded.forEach(loc => {
+                    customLocations.push(loc);
+
+                    // Add marker
+                    const marker = L.marker([loc.lat, loc.lng], {
+                        icon: createIcon(loc.category)
+                    }).addTo(map);
+
+                    marker.bindPopup(`
+                        <div class="popup-title">${loc.name}</div>
+                        <div class="popup-category">${loc.category} (Custom)</div>
+                        <div class="popup-description">${loc.description}</div>
+                        ${loc.source ? `<div style="margin-top: 8px;"><a href="${loc.source}" target="_blank" style="color: #667eea;">🔗 Source</a></div>` : ''}
+                    `);
+
+                    markers[loc.name] = marker;
+
+                    // Add to sidebar
+                    const categoryMap = {
+                        'Day Trip (All Family)': 'day-trips-all',
+                        'Day Trip (Trails)': 'day-trips-trails',
+                        'Day Trip (City Tour)': 'day-trips-city',
+                        'Weekend Trip': 'weekend-trips',
+                        'BC Provincial Park': 'bc-parks'
+                    };
+
+                    const containerId = categoryMap[loc.category];
+                    const container = document.getElementById(containerId);
+                    const item = document.createElement('div');
+                    item.className = 'location-item';
+                    item.innerHTML = `
+                        <span class="location-name">${loc.name} ⭐</span>
+                        <button class="add-btn" onclick="toggleLocation('${loc.name}')">Add</button>
+                    `;
+                    item.onclick = (e) => {
+                        if (e.target.tagName !== 'BUTTON') {
+                            markers[loc.name].openPopup();
+                            map.setView([loc.lat, loc.lng], 13);
+                        }
+                    };
+                    container.appendChild(item);
+                });
+            } catch (e) {
+                console.error('Error loading custom locations:', e);
+            }
+        }
+
+        // Save custom locations to localStorage whenever they change
+        function saveCustomLocations() {
+            localStorage.setItem('customLocations', JSON.stringify(customLocations));
+        }
+
+        // Update the handleAddCustomLocation to save after adding
+        const originalHandleAdd = handleAddCustomLocation;
+        handleAddCustomLocation = function(event) {
+            originalHandleAdd(event);
+            if (!event.defaultPrevented) {
+                saveCustomLocations();
+            }
+        };
     </script>
 </body>
 </html>
