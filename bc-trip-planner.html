@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BC Trip Planner - Vancouver & Beyond</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c5364, #203a43, #0f2027);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .sidebar {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            max-height: calc(100vh - 250px);
+            overflow-y: auto;
+        }
+
+        .category {
+            margin-bottom: 25px;
+        }
+
+        .category-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1.1em;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: transform 0.2s;
+        }
+
+        .category-header:hover {
+            transform: translateX(5px);
+        }
+
+        .category-header .icon {
+            font-size: 1.3em;
+        }
+
+        .locations {
+            margin-top: 10px;
+        }
+
+        .location-item {
+            background: white;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .location-item:hover {
+            transform: translateX(10px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .location-item.selected {
+            background: #e8eaf6;
+            border-left-color: #4caf50;
+        }
+
+        .location-name {
+            font-weight: 500;
+            flex: 1;
+        }
+
+        .add-btn {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.3s;
+        }
+
+        .add-btn:hover {
+            background: #45a049;
+        }
+
+        .add-btn.added {
+            background: #ff9800;
+        }
+
+        .map-section {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        #map {
+            height: 500px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .trip-planner {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            min-height: 200px;
+        }
+
+        .trip-planner h2 {
+            color: #2c5364;
+            margin-bottom: 15px;
+            font-size: 1.8em;
+        }
+
+        .planned-items {
+            display: grid;
+            gap: 10px;
+        }
+
+        .planned-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .planned-item-info {
+            flex: 1;
+        }
+
+        .planned-item-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #2c5364;
+        }
+
+        .planned-item-category {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .planned-item-description {
+            font-size: 0.9em;
+            color: #555;
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+
+        .remove-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .remove-btn:hover {
+            background: #d32f2f;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #ff9800;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #f57c00;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 152, 0, 0.4);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 15px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                max-height: none;
+            }
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5568d3;
+        }
+
+        .leaflet-popup-content {
+            margin: 15px;
+        }
+
+        .popup-title {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #2c5364;
+            margin-bottom: 8px;
+        }
+
+        .popup-category {
+            background: #667eea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+
+        .popup-description {
+            font-size: 0.9em;
+            color: #555;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🍁 BC Trip Planner</h1>
+            <p>Explore Vancouver & British Columbia with Your Family</p>
+        </header>
+
+        <div class="main-content">
+            <div class="sidebar">
+                <div class="category">
+                    <div class="category-header">
+                        <span>🏞️ Day Trips (All Family)</span>
+                    </div>
+                    <div class="locations" id="day-trips-all"></div>
+                </div>
+
+                <div class="category">
+                    <div class="category-header">
+                        <span>🥾 Day Trips (Trails)</span>
+                    </div>
+                    <div class="locations" id="day-trips-trails"></div>
+                </div>
+
+                <div class="category">
+                    <div class="category-header">
+                        <span>🌆 Day Trips (City Tour)</span>
+                    </div>
+                    <div class="locations" id="day-trips-city"></div>
+                </div>
+
+                <div class="category">
+                    <div class="category-header">
+                        <span>🏕️ Weekend Trips</span>
+                    </div>
+                    <div class="locations" id="weekend-trips"></div>
+                </div>
+            </div>
+
+            <div class="map-section">
+                <div id="map"></div>
+
+                <div class="trip-planner">
+                    <h2>📋 Your Trip Plan</h2>
+                    <div id="planned-items" class="planned-items">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🗺️</div>
+                            <p>Start building your trip by selecting locations from the sidebar</p>
+                        </div>
+                    </div>
+                    <div class="controls">
+                        <button class="btn btn-primary" onclick="exportPlan()">📥 Export Plan (Text)</button>
+                        <button class="btn btn-primary" onclick="exportPlanJSON()">💾 Save Plan (JSON)</button>
+                        <button class="btn btn-primary" onclick="loadPlanJSON()">📂 Load Plan (JSON)</button>
+                        <button class="btn btn-secondary" onclick="clearPlan()">🗑️ Clear All</button>
+                    </div>
+                    <input type="file" id="fileInput" accept=".json" style="display: none;" onchange="handleFileSelect(event)">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Trip destinations data
+        const destinations = {
+            dayTripsAll: [
+                {
+                    name: "Capilano Suspension Bridge",
+                    lat: 49.3429,
+                    lng: -123.1149,
+                    description: "Walk among the treetops on suspension bridges, perfect for all ages. Includes Cliffwalk and Treetops Adventure.",
+                    category: "Day Trip (All Family)"
+                },
+                {
+                    name: "Stanley Park",
+                    lat: 49.3044,
+                    lng: -123.1443,
+                    description: "Vancouver's famous urban park with seawall, beaches, totem poles, and Vancouver Aquarium. Great for biking and walking.",
+                    category: "Day Trip (All Family)"
+                },
+                {
+                    name: "Granville Island",
+                    lat: 49.2714,
+                    lng: -123.1343,
+                    description: "Public market, artisan shops, street performers, and waterfront dining. Family-friendly atmosphere.",
+                    category: "Day Trip (All Family)"
+                },
+                {
+                    name: "Grouse Mountain",
+                    lat: 49.3809,
+                    lng: -123.0819,
+                    description: "Scenic gondola ride, wildlife refuge with bears and wolves, lumberjack shows, and hiking trails.",
+                    category: "Day Trip (All Family)"
+                },
+                {
+                    name: "Lynn Canyon Park",
+                    lat: 49.3441,
+                    lng: -123.0231,
+                    description: "Free suspension bridge, swimming holes, waterfalls, and easy forest trails. Less crowded than Capilano.",
+                    category: "Day Trip (All Family)"
+                },
+                {
+                    name: "Steveston Village",
+                    lat: 49.1253,
+                    lng: -123.1777,
+                    description: "Historic fishing village with fresh seafood, boardwalk, Gulf of Georgia Cannery museum, and waterfront parks.",
+                    category: "Day Trip (All Family)"
+                }
+            ],
+            dayTripsTrails: [
+                {
+                    name: "Quarry Rock (Deep Cove)",
+                    lat: 49.3292,
+                    lng: -122.9476,
+                    description: "Popular 3.8km trail with stunning views of Indian Arm. Moderate difficulty, suitable for families with older kids.",
+                    category: "Day Trip (Trails)"
+                },
+                {
+                    name: "Lighthouse Park",
+                    lat: 49.3342,
+                    lng: -123.2630,
+                    description: "Old-growth forest trails leading to Point Atkinson Lighthouse. Multiple trail options from easy to moderate.",
+                    category: "Day Trip (Trails)"
+                },
+                {
+                    name: "Dog Mountain Trail",
+                    lat: 49.4356,
+                    lng: -123.2106,
+                    description: "Moderate 7km trail on Mount Seymour with panoramic views. Best in summer and fall.",
+                    category: "Day Trip (Trails)"
+                },
+                {
+                    name: "Joffre Lakes",
+                    lat: 50.3734,
+                    lng: -122.4897,
+                    description: "Stunning turquoise glacier-fed lakes. 10km moderate trail with three beautiful lakes. 2.5 hour drive from Vancouver.",
+                    category: "Day Trip (Trails)"
+                },
+                {
+                    name: "Tunnel Bluffs",
+                    lat: 49.6628,
+                    lng: -123.1953,
+                    description: "Moderate 8km hike near Squamish with incredible views of Howe Sound. Exposed cliff sections.",
+                    category: "Day Trip (Trails)"
+                },
+                {
+                    name: "Stawamus Chief",
+                    lat: 49.6818,
+                    lng: -123.1572,
+                    description: "Challenging hike up granite monolith in Squamish. Three peaks available, first peak is 4km round trip.",
+                    category: "Day Trip (Trails)"
+                }
+            ],
+            dayTripsCity: [
+                {
+                    name: "Gastown & Waterfront",
+                    lat: 49.2839,
+                    lng: -123.1086,
+                    description: "Historic neighborhood with steam clock, cobblestone streets, boutique shops, and restaurants.",
+                    category: "Day Trip (City Tour)"
+                },
+                {
+                    name: "Vancouver Art Gallery",
+                    lat: 49.2828,
+                    lng: -123.1207,
+                    description: "Major art gallery featuring Emily Carr and contemporary exhibitions. Located in historic courthouse.",
+                    category: "Day Trip (City Tour)"
+                },
+                {
+                    name: "Science World",
+                    lat: 49.2734,
+                    lng: -123.1038,
+                    description: "Interactive science museum with OMNIMAX theatre. Perfect for kids and families.",
+                    category: "Day Trip (City Tour)"
+                },
+                {
+                    name: "VanDusen Botanical Garden",
+                    lat: 49.2391,
+                    lng: -123.1329,
+                    description: "55-acre garden with plants from around the world. Beautiful in all seasons, especially during Festival of Lights.",
+                    category: "Day Trip (City Tour)"
+                },
+                {
+                    name: "Museum of Anthropology (UBC)",
+                    lat: 49.2693,
+                    lng: -123.2590,
+                    description: "World-class collection of Northwest Coast First Nations art and artifacts on beautiful waterfront campus.",
+                    category: "Day Trip (City Tour)"
+                },
+                {
+                    name: "Richmond Night Market",
+                    lat: 49.1877,
+                    lng: -123.1368,
+                    description: "Summer night market (May-Oct) with Asian street food, shopping, and entertainment. Open evenings.",
+                    category: "Day Trip (City Tour)"
+                }
+            ],
+            weekendTrips: [
+                {
+                    name: "Whistler",
+                    lat: 50.1163,
+                    lng: -122.9574,
+                    description: "Year-round mountain resort. Winter skiing, summer hiking, mountain biking, and Peak 2 Peak gondola. World-class village.",
+                    category: "Weekend Trip"
+                },
+                {
+                    name: "Victoria & Butchart Gardens",
+                    lat: 48.4284,
+                    lng: -123.3656,
+                    description: "BC's capital city. Parliament Buildings, Inner Harbour, Royal BC Museum, and stunning Butchart Gardens. Ferry required.",
+                    category: "Weekend Trip"
+                },
+                {
+                    name: "Tofino",
+                    lat: 49.1530,
+                    lng: -125.9073,
+                    description: "Wild Pacific coast with surfing, storm watching, ancient rainforest, and hot springs. 4.5 hour drive + ferry.",
+                    category: "Weekend Trip"
+                },
+                {
+                    name: "Okanagan Valley",
+                    lat: 49.8839,
+                    lng: -119.4960,
+                    description: "Wine country with lake beaches, wineries, fruit orchards, and water sports. Kelowna/Penticton area. 4 hour drive.",
+                    category: "Weekend Trip"
+                },
+                {
+                    name: "Gulf Islands",
+                    lat: 48.8500,
+                    lng: -123.3300,
+                    description: "Salt Spring, Pender, Galiano islands. Artists communities, farmers markets, kayaking, beaches. Ferry access.",
+                    category: "Weekend Trip"
+                },
+                {
+                    name: "Sunshine Coast",
+                    lat: 49.6342,
+                    lng: -124.0183,
+                    description: "Gibsons, Sechelt, Powell River. Beaches, hiking, kayaking, art galleries. Ferry from Horseshoe Bay.",
+                    category: "Weekend Trip"
+                }
+            ]
+        };
+
+        // Initialize map centered on Vancouver
+        const map = L.map('map').setView([49.2827, -123.1207], 10);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 18
+        }).addTo(map);
+
+        // Store markers
+        const markers = {};
+        let selectedLocations = [];
+
+        // Color coding for categories
+        const categoryColors = {
+            'Day Trip (All Family)': '#4caf50',
+            'Day Trip (Trails)': '#ff9800',
+            'Day Trip (City Tour)': '#2196f3',
+            'Weekend Trip': '#9c27b0'
+        };
+
+        // Create custom icons
+        function createIcon(category) {
+            return L.divIcon({
+                className: 'custom-icon',
+                html: `<div style="
+                    background-color: ${categoryColors[category]};
+                    width: 30px;
+                    height: 30px;
+                    border-radius: 50%;
+                    border: 3px solid white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                "></div>`,
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            });
+        }
+
+        // Add markers to map
+        function addMarkers(locations, category) {
+            locations.forEach(location => {
+                const marker = L.marker([location.lat, location.lng], {
+                    icon: createIcon(category)
+                }).addTo(map);
+
+                marker.bindPopup(`
+                    <div class="popup-title">${location.name}</div>
+                    <div class="popup-category">${location.category}</div>
+                    <div class="popup-description">${location.description}</div>
+                `);
+
+                markers[location.name] = marker;
+            });
+        }
+
+        // Populate sidebar
+        function populateSidebar(containerId, locations) {
+            const container = document.getElementById(containerId);
+            locations.forEach(location => {
+                const item = document.createElement('div');
+                item.className = 'location-item';
+                item.innerHTML = `
+                    <span class="location-name">${location.name}</span>
+                    <button class="add-btn" onclick="toggleLocation('${location.name}')">Add</button>
+                `;
+                item.onclick = (e) => {
+                    if (e.target.tagName !== 'BUTTON') {
+                        markers[location.name].openPopup();
+                        map.setView([location.lat, location.lng], 13);
+                    }
+                };
+                container.appendChild(item);
+            });
+        }
+
+        // Toggle location selection
+        function toggleLocation(name) {
+            const allLocations = [
+                ...destinations.dayTripsAll,
+                ...destinations.dayTripsTrails,
+                ...destinations.dayTripsCity,
+                ...destinations.weekendTrips
+            ];
+
+            const location = allLocations.find(l => l.name === name);
+            const index = selectedLocations.findIndex(l => l.name === name);
+
+            if (index === -1) {
+                selectedLocations.push(location);
+            } else {
+                selectedLocations.splice(index, 1);
+            }
+
+            updatePlanDisplay();
+            updateButtonStates();
+        }
+
+        // Update button states
+        function updateButtonStates() {
+            document.querySelectorAll('.location-item').forEach(item => {
+                const name = item.querySelector('.location-name').textContent;
+                const button = item.querySelector('.add-btn');
+                const isSelected = selectedLocations.some(l => l.name === name);
+
+                if (isSelected) {
+                    button.textContent = 'Remove';
+                    button.classList.add('added');
+                    item.classList.add('selected');
+                } else {
+                    button.textContent = 'Add';
+                    button.classList.remove('added');
+                    item.classList.remove('selected');
+                }
+            });
+        }
+
+        // Update trip plan display
+        function updatePlanDisplay() {
+            const container = document.getElementById('planned-items');
+
+            if (selectedLocations.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🗺️</div>
+                        <p>Start building your trip by selecting locations from the sidebar</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = selectedLocations.map(location => `
+                <div class="planned-item">
+                    <div class="planned-item-info">
+                        <div class="planned-item-name">${location.name}</div>
+                        <div class="planned-item-category">${location.category}</div>
+                        <div class="planned-item-description">${location.description}</div>
+                    </div>
+                    <button class="remove-btn" onclick="toggleLocation('${location.name}')">Remove</button>
+                </div>
+            `).join('');
+        }
+
+        // Export plan
+        function exportPlan() {
+            if (selectedLocations.length === 0) {
+                alert('Please add some locations to your trip plan first!');
+                return;
+            }
+
+            let text = '🍁 BC TRIP PLAN\n';
+            text += '=' .repeat(50) + '\n\n';
+
+            const groupedByCategory = selectedLocations.reduce((acc, location) => {
+                if (!acc[location.category]) {
+                    acc[location.category] = [];
+                }
+                acc[location.category].push(location);
+                return acc;
+            }, {});
+
+            Object.entries(groupedByCategory).forEach(([category, locations]) => {
+                text += `\n${category}\n`;
+                text += '-'.repeat(50) + '\n';
+                locations.forEach((location, index) => {
+                    text += `\n${index + 1}. ${location.name}\n`;
+                    text += `   ${location.description}\n`;
+                    text += `   📍 Coordinates: ${location.lat}, ${location.lng}\n`;
+                });
+            });
+
+            text += '\n\n' + '='.repeat(50);
+            text += '\nGenerated by BC Trip Planner';
+
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'bc-trip-plan.txt';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Clear plan
+        function clearPlan() {
+            if (selectedLocations.length === 0) return;
+
+            if (confirm('Are you sure you want to clear your entire trip plan?')) {
+                selectedLocations = [];
+                updatePlanDisplay();
+                updateButtonStates();
+            }
+        }
+
+        // Export plan as JSON
+        function exportPlanJSON() {
+            if (selectedLocations.length === 0) {
+                alert('Please add some locations to your trip plan first!');
+                return;
+            }
+
+            const planData = {
+                version: '1.0',
+                exportDate: new Date().toISOString(),
+                planName: prompt('Enter a name for this plan:', 'BC Trip Plan ' + new Date().toLocaleDateString()) || 'BC Trip Plan',
+                locations: selectedLocations
+            };
+
+            const jsonString = JSON.stringify(planData, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const filename = planData.planName.toLowerCase().replace(/\s+/g, '-') + '.json';
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            alert('Plan saved successfully! You can load this plan later to compare with other options.');
+        }
+
+        // Load plan from JSON
+        function loadPlanJSON() {
+            document.getElementById('fileInput').click();
+        }
+
+        // Handle file selection
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const planData = JSON.parse(e.target.result);
+
+                    // Validate plan data
+                    if (!planData.locations || !Array.isArray(planData.locations)) {
+                        throw new Error('Invalid plan format');
+                    }
+
+                    // Ask user if they want to replace or merge
+                    let shouldReplace = true;
+                    if (selectedLocations.length > 0) {
+                        shouldReplace = confirm(
+                            `You have ${selectedLocations.length} location(s) in your current plan.\n\n` +
+                            `Click OK to REPLACE your current plan with "${planData.planName || 'loaded plan'}".\n` +
+                            `Click Cancel to MERGE both plans together.`
+                        );
+                    }
+
+                    if (shouldReplace) {
+                        selectedLocations = planData.locations;
+                    } else {
+                        // Merge - add locations that aren't already selected
+                        planData.locations.forEach(location => {
+                            if (!selectedLocations.some(l => l.name === location.name)) {
+                                selectedLocations.push(location);
+                            }
+                        });
+                    }
+
+                    updatePlanDisplay();
+                    updateButtonStates();
+
+                    // Show summary
+                    const planInfo = `Plan loaded successfully!\n\n` +
+                        `Plan: ${planData.planName || 'Unnamed'}\n` +
+                        `Saved: ${planData.exportDate ? new Date(planData.exportDate).toLocaleString() : 'Unknown'}\n` +
+                        `Locations: ${planData.locations.length}\n\n` +
+                        `Your trip plan now has ${selectedLocations.length} location(s).`;
+
+                    alert(planInfo);
+
+                } catch (error) {
+                    alert('Error loading plan: ' + error.message + '\n\nPlease make sure you selected a valid plan file.');
+                }
+            };
+            reader.readAsText(file);
+
+            // Reset file input
+            event.target.value = '';
+        }
+
+        // Initialize
+        addMarkers(destinations.dayTripsAll, 'Day Trip (All Family)');
+        addMarkers(destinations.dayTripsTrails, 'Day Trip (Trails)');
+        addMarkers(destinations.dayTripsCity, 'Day Trip (City Tour)');
+        addMarkers(destinations.weekendTrips, 'Weekend Trip');
+
+        populateSidebar('day-trips-all', destinations.dayTripsAll);
+        populateSidebar('day-trips-trails', destinations.dayTripsTrails);
+        populateSidebar('day-trips-city', destinations.dayTripsCity);
+        populateSidebar('weekend-trips', destinations.weekendTrips);
+    </script>
+</body>
+</html>
