@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BC Used Car Deal Finder</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    min-height: 100vh; padding: 20px; color: #1a1a1a;
+  }
+  .container {
+    max-width: 1400px; margin: 0 auto; background: #fff;
+    border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden;
+  }
+  header {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: #fff; padding: 28px 32px;
+  }
+  header h1 { font-size: 2em; margin-bottom: 6px; }
+  header p  { opacity: 0.85; font-size: 0.95em; }
+  .meta { padding: 16px 32px; background: #f5f7fb; color: #555;
+          font-size: 0.85em; border-bottom: 1px solid #e5e7eb;
+          display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .tabs {
+    display: flex; gap: 4px; padding: 16px 32px 0; background: #fff;
+    border-bottom: 2px solid #e5e7eb; flex-wrap: wrap;
+  }
+  .tab {
+    background: #f1f3f7; color: #444; border: none; padding: 10px 18px;
+    border-radius: 8px 8px 0 0; cursor: pointer; font-size: 0.95em;
+    font-weight: 500; transition: all 0.15s;
+  }
+  .tab:hover { background: #e5e9f2; }
+  .tab.active { background: #2a5298; color: #fff; }
+  .panel { padding: 24px 32px; display: none; }
+  .panel.active { display: block; }
+  .panel h2 { font-size: 1.3em; margin-bottom: 12px; }
+  .panel-meta { color: #666; font-size: 0.9em; margin-bottom: 16px; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 0.9em;
+    background: #fff; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eef0f3; }
+  th {
+    background: #f8fafc; font-weight: 600; color: #374151;
+    cursor: pointer; user-select: none; position: sticky; top: 0;
+  }
+  th:hover { background: #eef2f7; }
+  tr:hover td { background: #f9fafc; }
+  .deal { font-weight: 600; white-space: nowrap; }
+  .deal.fire    { color: #c2410c; }
+  .deal.good    { color: #15803d; }
+  .deal.fair    { color: #525252; }
+  .deal.bad     { color: #b91c1c; }
+  .grade {
+    display: inline-block; min-width: 22px; text-align: center;
+    padding: 2px 6px; border-radius: 4px; font-weight: 700;
+    font-size: 0.85em; color: #fff;
+  }
+  .grade.A { background: #15803d; }
+  .grade.B { background: #65a30d; }
+  .grade.C { background: #ca8a04; }
+  .grade.D { background: #ea580c; }
+  .grade.F { background: #b91c1c; }
+  .grade.U { background: #6b7280; }     /* unknown */
+  .dealer-cell { display: flex; flex-direction: column; gap: 2px; min-width: 130px; }
+  .dealer-cell .name { font-size: 0.85em; color: #1f2937; line-height: 1.2;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+  .dealer-cell .meta { font-size: 0.75em; color: #6b7280; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 0.7em; font-weight: 600; margin-left: 4px;
+  }
+  .badge.cpo { background: #dbeafe; color: #1e40af; }
+  .badge.brand { background: #fef3c7; color: #92400e; }
+  .badge.src-autotrader { background: #ecfdf5; color: #065f46; }
+  .badge.src-kijiji     { background: #fef3c7; color: #78350f; }
+  .warr {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 0.78em; font-weight: 600; white-space: nowrap;
+    cursor: help; position: relative;
+  }
+  .warr.cpo      { background: #fef3c7; color: #78350f; border: 1px solid #fde68a; }
+  .warr.factory  { background: #dcfce7; color: #14532d; }
+  .warr.hybrid   { background: #cffafe; color: #155e75; }
+  .warr.expired  { background: #fee2e2; color: #7f1d1d; }
+  .warr.unknown  { background: #f1f5f9; color: #475569; }
+  .warr .tip {
+    display: none; position: absolute; left: 0; top: 100%;
+    margin-top: 6px; background: #1f2937; color: #e5e7eb;
+    padding: 8px 12px; border-radius: 6px; font-weight: 400;
+    font-size: 0.92em; line-height: 1.4; white-space: normal;
+    width: 280px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+  }
+  .warr:hover .tip { display: block; }
+  /* Match-score matrix */
+  .matrix-toggle {
+    background: none; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 12px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 600;
+  }
+  .matrix-toggle:hover { background: #eef2f7; }
+  .matrix-toggle.on { background: #2a5298; color: #fff; border-color: #2a5298; }
+  .matrix-panel {
+    background: #f5f7fb; padding: 18px 32px; display: none;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .matrix-panel.open { display: block; }
+  .matrix-panel h3 {
+    font-size: 0.95em; color: #1f2937; margin-bottom: 4px;
+  }
+  .matrix-panel p.hint {
+    font-size: 0.82em; color: #6b7280; margin-bottom: 14px;
+  }
+  .matrix-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 10px 24px; margin-bottom: 12px;
+  }
+  .matrix-row {
+    display: flex; align-items: center; gap: 12px; font-size: 0.9em;
+  }
+  .matrix-row .lbl { flex: 1; color: #1f2937; }
+  .matrix-row input[type=range] { width: 120px; accent-color: #2a5298; }
+  .matrix-row .val {
+    min-width: 38px; text-align: center; font-weight: 600;
+    font-size: 0.85em; color: #2a5298;
+    background: #fff; padding: 2px 6px; border-radius: 4px;
+    border: 1px solid #e5e7eb;
+  }
+  .matrix-actions { display: flex; gap: 8px; }
+  .matrix-actions button {
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 500; border: 1px solid transparent;
+  }
+  .matrix-actions .apply { background: #2a5298; color: #fff; }
+  .matrix-actions .apply:hover { background: #1e3c72; }
+  .matrix-actions .preset { background: #fff; color: #2a5298; border-color: #c8d2e0; }
+  .matrix-actions .clear  { background: #fff; color: #b91c1c; border-color: #fecaca; }
+  .match-bar {
+    display: inline-block; min-width: 56px; padding: 3px 9px;
+    border-radius: 4px; font-weight: 600; font-size: 0.85em;
+    color: #fff; text-align: center;
+  }
+  .match-bar.high   { background: #15803d; }
+  .match-bar.good   { background: #65a30d; }
+  .match-bar.med    { background: #ca8a04; }
+  .match-bar.low    { background: #ea580c; }
+  .match-bar.poor   { background: #b91c1c; }
+  th.col-match, td.col-match { display: none; }
+  .panel.match-on th.col-match,
+  .panel.match-on td.col-match { display: table-cell; }
+  .total-cell {
+    white-space: nowrap; position: relative; cursor: help;
+    border-bottom: 1px dotted #999; display: inline-block;
+  }
+  .total-cell .breakdown {
+    display: none; position: absolute; left: 0; top: 100%;
+    background: #1f2937; color: #fff; padding: 8px 0; border-radius: 6px;
+    font-size: 0.78em; white-space: nowrap; z-index: 1000;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25); margin-top: 6px; min-width: 220px;
+  }
+  .total-cell:hover .breakdown { display: block; }
+  .breakdown table { background: transparent; box-shadow: none; }
+  .breakdown td {
+    padding: 3px 14px; color: #e5e7eb; border: none;
+    font-weight: 400; background: transparent;
+  }
+  .breakdown td.lbl { color: #9ca3af; padding-right: 8px; }
+  .breakdown td.amt { text-align: right; font-variant-numeric: tabular-nums; }
+  .breakdown tr.total td { color: #fff; font-weight: 600; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.2); }
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    background: #f5f7fb; padding: 12px 14px; border-radius: 8px; margin-bottom: 12px;
+    font-size: 0.88em;
+  }
+  .filter-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .filter-bar select, .filter-bar input[type="checkbox"] { cursor: pointer; }
+  .filter-bar select {
+    padding: 4px 8px; border: 1px solid #c8d2e0; border-radius: 4px;
+    background: #fff; font-size: 0.95em;
+  }
+  .filter-bar .count { margin-left: auto; color: #555; font-weight: 500; }
+  .filter-bar .reset {
+    background: #fff; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em;
+  }
+  .filter-bar .reset:hover { background: #eef2f7; }
+  th.sortable { cursor: pointer; }
+  th.sortable:after { content: ' ↕'; opacity: 0.3; font-size: 0.85em; }
+  th.sortable.asc:after  { content: ' ↑'; opacity: 1; color: #2a5298; }
+  th.sortable.desc:after { content: ' ↓'; opacity: 1; color: #2a5298; }
+  .cpo-tooltip { border-bottom: 1px dotted #888; cursor: help; }
+  .price { font-weight: 600; }
+  td a { color: #2a5298; text-decoration: none; font-weight: 500; }
+  td a:hover { text-decoration: underline; }
+  .empty { padding: 40px; text-align: center; color: #888; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.85em; color: #555; margin-top: 16px; }
+  .legend span { padding: 4px 10px; border-radius: 12px; background: #f1f3f7; }
+  @media (max-width: 700px) {
+    body { padding: 8px; }
+    header, .meta, .tabs, .panel { padding-left: 16px; padding-right: 16px; }
+    th, td { padding: 8px 6px; font-size: 0.82em; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🚗 BC Used Car Deal Finder</h1>
+    <p>Listings ranked against a year + km regression. Dealer grade combines Google reviews, brand affiliation, CPO badges, and inventory.</p>
+    <p style="margin-top:8px;font-size:0.9em;"><a href="checklist.html" style="color:#9ec5ff;text-decoration:underline;">📋 Pre-purchase checklist →</a></p>
+  </header>
+  <div class="meta">
+    <span>Generated: <strong id="generated">—</strong></span>
+    <span>Total listings: <strong id="total">—</strong></span>
+    <span>Dealers: <strong id="dealer-count">—</strong></span>
+    <button class="matrix-toggle" id="matrix-toggle">🎯 Customize match score: OFF</button>
+  </div>
+  <div class="matrix-panel" id="matrix-panel">
+    <h3>What matters most to you?</h3>
+    <p class="hint">Set how important each factor is (0 = ignore, 5 = critical). The Match % column ranks listings by your priorities.</p>
+    <div class="matrix-grid" id="matrix-grid"></div>
+    <div class="matrix-actions">
+      <button class="apply"  id="matrix-apply">Apply</button>
+      <button class="preset" id="matrix-preset">Use balanced preset</button>
+      <button class="clear"  id="matrix-clear">Turn off</button>
+    </div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="panels"></div>
+</div>
+
+<script id="data" type="application/json">{"generated": "2026-05-07T11:40:19", "total": 34, "searches": [{"name": "Mazda CX-5 (learner car)", "items": [{"year": 2022, "title": "2022 Mazda CX-5 Grand Touring", "price": 22998, "km": 123045, "location": "ABBOTSFORD, BC \u2022 63 km from you", "deal_score": -0.0886553015486418, "url": "https://www.autotrader.ca/offers/mazda-cx-5-grand-touring-gasoline-white-6f2f1666-18b1-4ba9-aa91-600ae985c94b", "is_cpo": false, "source": "autotrader", "seller_name": "2566971 Alberta Ltd. dba River Valley Ford", "rating": 4.7, "review_count": 1092, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "River Valley Ford", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2021, "title": "2021 Mazda CX-5 GS AWD / No Accident History/ Apple Carplay", "price": 23800, "km": 131122, "location": "Victoria, BC \u2022 96 km from you", "deal_score": -0.0798193811464643, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gs-awd-no-accident-history-apple-carplay-gasoline-grey-bfabf6b5-8c67-4648-b0a0-0a45a99b58dc", "is_cpo": false, "source": "autotrader", "seller_name": "King's Auto Sales Ltd.", "rating": 4.9, "review_count": 299, "brand_match": false, "grade": "C", "grade_score": 50, "google_match": "King's Auto Sales Ltd.", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2021, "title": "2021 Mazda CX-5 GX | No Accidents | Like New | FREE 10,000 KM COMP", "price": 24980, "km": 45572, "location": "Vancouver, BC \u2022 5 km from you", "deal_score": -0.0658039698375961, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gx--no-accidents--like-new--free-10-000-km-comp-gasoline-blue-42a6a66b-2064-4122-900b-5a99229fcd7c", "is_cpo": false, "source": "autotrader", "seller_name": "Variety Auto Sales", "rating": 4.1, "review_count": 597, "brand_match": false, "grade": "C", "grade_score": 50, "google_match": "Variety Auto Sales", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km)", "warranty_cls": "factory"}, {"year": 2021, "title": "2021 Mazda CX-5 GS", "price": 24999, "km": 83005, "location": "Abbotsford, BC \u2022 58 km from you", "deal_score": -0.05151148943804959, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gs-gasoline-grey-70868ca8-1118-4f90-8ed0-3996a20b1a9f", "is_cpo": false, "source": "autotrader", "seller_name": "Abbotsford Mazda", "rating": 4.7, "review_count": 794, "brand_match": true, "grade": "A", "grade_score": 80, "google_match": "Abbotsford Mazda", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km)", "warranty_cls": "factory"}, {"year": 2020, "title": "2020 Mazda CX-5 GT AWD; AUTOMATIC, SUNROOF, AWD, LEATHER, NAV, BAC", "price": 25830, "km": 96000, "location": "Langley City, BC \u2022 38 km from you", "deal_score": -0.041046600373270695, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gt-awd-automatic-sunroof-awd-leather-nav-bac-gasoline-black-105f3b2b-4c06-4699-b3d4-b499f582121f", "is_cpo": true, "source": "autotrader", "seller_name": "Langley Toyota", "rating": 4.4, "review_count": 4008, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Langley Toyota", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2027 or 140,000 km", "warranty_cls": "cpo"}, {"year": 2020, "title": "2020 Mazda CX-5 GS AWD | Heated Seats!", "price": 26375, "km": 94975, "location": "VICTORIA, BC \u2022 94 km from you", "deal_score": -0.021194164087052426, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gs-awd--heated-seats-gasoline-red-bd07e58b-660e-4abb-af35-f1140c9167d6", "is_cpo": false, "source": "autotrader", "seller_name": "Harris Victoria Dodge", "rating": 4.3, "review_count": 2577, "brand_match": false, "grade": "C", "grade_score": 50, "google_match": "Harris Dodge", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2021, "title": "2021 Mazda CX-5 Leather | Heated Seats | i-ACTIV AWD | Heated Stee", "price": 26495, "km": 72085, "location": "KAMLOOPS, BC \u2022 260 km from you", "deal_score": 0.001006068780862703, "url": "https://www.autotrader.ca/offers/mazda-cx-5-leather--heated-seats--i-activ-awd--heated-stee-gasoline-182c01c0-377b-4295-9a9d-dc865706b9a0", "is_cpo": false, "source": "autotrader", "seller_name": "Dearborn Ford", "rating": 4.6, "review_count": 1479, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Dearborn Ford Kamloops", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km)", "warranty_cls": "factory"}, {"year": 2022, "title": "2022 Mazda CX-5 GX AWD | Rearview Cam, One Owner, CarPlay, Smart B", "price": 25488, "km": 118759, "location": "Kelowna, BC \u2022 276 km from you", "deal_score": 0.008264594390837357, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gx-awd--rearview-cam-one-owner-carplay-smart-b-gasoline-blue-489465dc-b82f-4c63-8627-2c6601262c6c", "is_cpo": false, "source": "autotrader", "seller_name": "Kelowna Mazda", "rating": 4.7, "review_count": 1180, "brand_match": true, "grade": "A", "grade_score": 80, "google_match": "Kelowna Mazda", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2020, "title": "2020 Mazda CX-5 Heated Leather! Sunroof!", "price": 27520, "km": 63876, "location": "Vancouver, BC \u2022 3 km from you", "deal_score": 0.009381946416952629, "url": "https://www.autotrader.ca/offers/mazda-cx-5-heated-leather-sunroof-gasoline-black-c85aed14-4cc7-4b9b-af2c-63c0c7516362", "is_cpo": true, "source": "autotrader", "seller_name": "Audi Downtown Vancouver", "rating": 4.2, "review_count": 877, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Audi Downtown Vancouver", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2027 or 140,000 km", "warranty_cls": "cpo"}, {"year": 2021, "title": "2021 Mazda CX-5 SIGNATURE AWD TURBO", "price": 26380, "km": 123020, "location": "SURREY, BC \u2022 31 km from you", "deal_score": 0.016673682282606295, "url": "https://www.autotrader.ca/offers/mazda-cx-5-signature-awd-turbo-gasoline-red-a18f59e4-39b6-40ef-a743-560b51fc7285", "is_cpo": false, "source": "autotrader", "seller_name": "King George Nissan", "rating": 4.3, "review_count": 499, "brand_match": false, "grade": "C", "grade_score": 40, "google_match": "King George Nissan", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2020, "title": "2020 Mazda CX-5 GS AWD | 2.5l engine/Sunroof/Power seat", "price": 27895, "km": 69338, "location": "BURNABY, BC \u2022 9 km from you", "deal_score": 0.02523717513882791, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gs-awd--2-5l-engine-sunroof-power-seat-gasoline-grey-ec9f64ff-8aca-4aec-a822-2bae6424529c", "is_cpo": false, "source": "autotrader", "seller_name": "Carter GM", "rating": 4.5, "review_count": 2373, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Carter Chevrolet Cadillac Buick GMC", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2021, "title": "2021 Mazda CX-5", "price": 26999, "km": 125650, "location": "Nanaimo, BC \u2022 65 km from you", "deal_score": 0.04160960420940102, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gasoline-black-b4e28cc3-e188-4eec-a742-473d336e2968", "is_cpo": false, "source": "autotrader", "seller_name": "Nissan Of Nanaimo", "rating": 4.2, "review_count": 953, "brand_match": false, "grade": "C", "grade_score": 50, "google_match": "Nissan of Nanaimo", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}, {"year": 2021, "title": "2021 Mazda CX-5 Kuro Edition AWD", "price": 27980, "km": 40200, "location": "SURREY, BC \u2022 32 km from you", "deal_score": 0.044243394493599875, "url": "https://www.autotrader.ca/offers/mazda-cx-5-kuro-edition-awd-gasoline-black-9c1b46ef-4893-46ed-970a-d6a77867816d", "is_cpo": true, "source": "autotrader", "seller_name": "Midway Mazda", "rating": 4.1, "review_count": 323, "brand_match": true, "grade": "B", "grade_score": 70, "google_match": "Midway Mazda", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2028 or 140,000 km \u00b7 Factory powertrain (5 yr / 100,000 km)", "warranty_cls": "cpo"}, {"year": 2022, "title": "2022 Mazda CX-5 GS AWD at | AWD | POWER LIFTGATE | BACK-UP CAM | A", "price": 26998, "km": 77223, "location": "Surrey, BC \u2022 33 km from you", "deal_score": 0.050344553681737576, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gs-awd-at--awd--power-liftgate--back-up-cam--a-gasoline-blue-2390d9b5-85e4-47a8-a49c-371f4c258523", "is_cpo": true, "source": "autotrader", "seller_name": "White Rock Honda", "rating": 4.1, "review_count": 849, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "White Rock Honda", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2029 or 140,000 km \u00b7 Factory powertrain (5 yr / 100,000 km)", "warranty_cls": "cpo"}, {"year": 2021, "title": "2021 Mazda CX-5 Signature AWD at (2) Top of the line Signature! Ce", "price": 27900, "km": 107513, "location": "NORTH VANCOUVER, BC \u2022 8 km from you", "deal_score": 0.06872059197977186, "url": "https://www.autotrader.ca/offers/mazda-cx-5-signature-awd-at-2-top-of-the-line-signature-ce-gasoline-grey-c7eed779-23cd-49f1-84c3-c04891f603c2", "is_cpo": true, "source": "autotrader", "seller_name": "Morrey Mazda of the Northshore", "rating": 4.5, "review_count": 733, "brand_match": true, "grade": "A", "grade_score": 90, "google_match": "Morrey Mazda of the Northshore", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2028 or 140,000 km", "warranty_cls": "cpo"}, {"year": 2021, "title": "2021 Mazda CX-5 GT AWD / LEATHER / NAVIGATION!!", "price": 27999, "km": 130969, "location": "NANAIMO, BC \u2022 65 km from you", "deal_score": 0.08246127276515818, "url": "https://www.autotrader.ca/offers/mazda-cx-5-gt-awd-leather-navigation-gasoline-black-d7c283fe-1c9a-437f-bfb9-8c6d6bf8dfb7", "is_cpo": false, "source": "autotrader", "seller_name": "Harris Mazda", "rating": 4.4, "review_count": 728, "brand_match": true, "grade": "B", "grade_score": 70, "google_match": "Harris Mazda", "warranty_label": "Expired", "warranty_detail": "All factory new-vehicle warranties out by age/km. Ask about extended warranty.", "warranty_cls": "expired"}]}, {"name": "Toyota RAV4 Hybrid (family car)", "items": [{"year": 2023, "title": "2023 Toyota RAV 4 Hybrid Hybrid XLE AWD", "price": 33995, "km": 92898, "location": "NORTH VANCOUVER, BC \u2022 8 km from you", "deal_score": -0.11232209333052805, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-xle-awd-gas-electric-hybrid-red-1b11a7fe-66a4-4dac-86d9-9bbcfe94c20d", "is_cpo": false, "source": "autotrader", "seller_name": "Jim Pattison Toyota Northshore", "rating": 4.4, "review_count": 1149, "brand_match": true, "grade": "A", "grade_score": 85, "google_match": "Jim Pattison Toyota Northshore", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2022, "title": "2022 Toyota RAV 4 Hybrid Hybrid XLE AWD/BC Car", "price": 31990, "km": 114800, "location": "Coquitlam, BC \u2022 19 km from you", "deal_score": -0.10366411479631986, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-xle-awd-bc-car-gas-electric-hybrid-grey-81fa3e65-b4bc-4799-892a-493d9bfbff19", "is_cpo": false, "source": "autotrader", "seller_name": "Infinite Ride Auto Ltd.", "rating": 4.8, "review_count": 91, "brand_match": false, "grade": "C", "grade_score": 40, "google_match": "Infinite Ride Auto", "warranty_label": "Hybrid only", "warranty_detail": "Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "hybrid"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid LE", "price": 36450, "km": 92220, "location": "Chilliwack, BC \u2022 85 km from you", "deal_score": -0.04916409665323436, "url": "https://www.autotrader.ca/offers/toyota-rav-4-le-gas-electric-hybrid-white-d5152f34-cd98-4b48-9bcd-1793813f0f03", "is_cpo": false, "source": "autotrader", "seller_name": "Bannister Chilliwack Chrysler Dodge Jeep Ram", "rating": 4.3, "review_count": 816, "brand_match": false, "grade": "C", "grade_score": 50, "google_match": "Bannister Chilliwack Chrysler Dodge Jeep Ram", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2024, "title": "2024 Toyota RAV 4 Hybrid Hybrid LE AWD", "price": 39995, "km": 63000, "location": "NORTH VANCOUVER, BC \u2022 8 km from you", "deal_score": -0.03284338430317432, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-le-awd-gas-electric-hybrid-cf5621e1-a3fb-4b9b-a7e0-a5729b577499", "is_cpo": false, "source": "autotrader", "seller_name": "Jim Pattison Toyota Northshore", "rating": 4.4, "review_count": 1149, "brand_match": true, "grade": "A", "grade_score": 85, "google_match": "Jim Pattison Toyota Northshore", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2022, "title": "2022 Toyota RAV 4 Hybrid LE", "price": 39995, "km": 24263, "location": "VANCOUVER, BC \u2022 3 km from you", "deal_score": -0.0193228310886698, "url": "https://www.autotrader.ca/offers/toyota-rav-4-le-gasoline-grey-7d61a0c3-517a-458d-9bf0-2fc337ae0749", "is_cpo": true, "source": "autotrader", "seller_name": "Regency Toyota-Vancouver", "rating": 4.6, "review_count": 1186, "brand_match": true, "grade": "A", "grade_score": 90, "google_match": "Regency Toyota Vancouver", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2029 or 160,000 km \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid LE AWD | Clean Title, One Owner!", "price": 39999, "km": 53203, "location": "RICHMOND, BC \u2022 10 km from you", "deal_score": -0.013092924489843455, "url": "https://www.autotrader.ca/offers/toyota-rav-4-le-awd--clean-title-one-owner-gas-electric-hybrid-white-9f462e84-da22-4f76-876f-ad409410200a", "is_cpo": false, "source": "autotrader", "seller_name": "OpenRoad Toyota Richmond", "rating": 4.5, "review_count": 4543, "brand_match": true, "grade": "A", "grade_score": 100, "google_match": "OpenRoad Toyota Richmond", "warranty_label": "Factory", "warranty_detail": "Factory bumper-to-bumper (3 yr / 60,000 km) \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2024, "title": "2024 Toyota RAV 4 Hybrid Hybrid LE AWD", "price": 39500, "km": 88149, "location": "WILLIAMS LAKE, BC \u2022 329 km from you", "deal_score": -0.010976476464791567, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-le-awd-gas-electric-hybrid-black-d61c65b0-a940-44ce-aa0c-827ac931128d", "is_cpo": false, "source": "autotrader", "seller_name": "Heartland Toyota", "rating": 4.5, "review_count": 110, "brand_match": true, "grade": "B", "grade_score": 60, "google_match": "Heartland Toyota", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2022, "title": "2022 Toyota RAV 4 Hybrid Hybrid LE AWD, Low Kms, Reliable, Fully Serviced", "price": 38880, "km": 55883, "location": "VANCOUVER, BC \u2022 6 km from you", "deal_score": -0.0031845846882927373, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-le-awd-low-kms-reliable-fully-serviced-gas-electric-hybrid-grey-e374980a-7f4b-465a-89f8-283a869a4db1", "is_cpo": false, "source": "autotrader", "seller_name": "BCS Auto Sales", "rating": 4.6, "review_count": 659, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "BCS Auto Sales", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid XLE", "price": 34877, "km": 155246, "location": "Nanaimo, BC \u2022 64 km from you", "deal_score": 0.002527632618640919, "url": "https://www.autotrader.ca/offers/toyota-rav-4-xle-gas-electric-hybrid-grey-bd7bd42b-53ef-4b8a-957e-e8a4bb5a2685", "is_cpo": false, "source": "autotrader", "seller_name": "Nanaimo Mitsubishi", "rating": 4.5, "review_count": 1474, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Nanaimo Mitsubishi", "warranty_label": "Hybrid only", "warranty_detail": "Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "hybrid"}, {"year": 2022, "title": "2022 Toyota RAV 4 Hybrid Hybrid Limited AWD", "price": 34995, "km": 129872, "location": "NORTH VANCOUVER, BC \u2022 8 km from you", "deal_score": 0.004395650511768661, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-limited-awd-gas-electric-hybrid-silver-c9355dfb-a634-4974-a21e-4ae512f0c18e", "is_cpo": true, "source": "autotrader", "seller_name": "Jim Pattison Toyota Northshore", "rating": 4.4, "review_count": 1149, "brand_match": true, "grade": "A", "grade_score": 85, "google_match": "Jim Pattison Toyota Northshore", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2029 or 160,000 km \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2024, "title": "2024 Toyota RAV 4 Hybrid SE AWD | Moonroof | One Owner & No Accidents!", "price": 39900, "km": 97665, "location": "NORTH VANCOUVER, BC \u2022 8 km from you", "deal_score": 0.012612082816382856, "url": "https://www.autotrader.ca/offers/toyota-rav-4-se-awd--moonroof--one-owner-no-accidents-gas-electric-hybrid-white-c8ce7f59-c242-4aef-bbc3-e8bb297b6d7e", "is_cpo": false, "source": "autotrader", "seller_name": "North Shore Kia", "rating": 4.5, "review_count": 844, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "North Shore Kia", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid XLE AWD | One Owner, No Accidents!", "price": 41999, "km": 39089, "location": "RICHMOND, BC \u2022 10 km from you", "deal_score": 0.0163427839746334, "url": "https://www.autotrader.ca/offers/toyota-rav-4-xle-awd--one-owner-no-accidents-gas-electric-hybrid-red-bc7b49a5-9590-426c-a093-aa1c4797a974", "is_cpo": true, "source": "autotrader", "seller_name": "OpenRoad Toyota Richmond", "rating": 4.5, "review_count": 4543, "brand_match": true, "grade": "A", "grade_score": 100, "google_match": "OpenRoad Toyota Richmond", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2030 or 160,000 km \u00b7 Factory bumper-to-bumper (3 yr / 60,000 km) \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid XLE AWD One Owner, Clean Title!", "price": 40999, "km": 59197, "location": "RICHMOND, BC \u2022 10 km from you", "deal_score": 0.020067201792383572, "url": "https://www.autotrader.ca/offers/toyota-rav-4-xle-awd-one-owner-clean-title-gas-electric-hybrid-blue-87b0e71d-72c5-4a1b-af7f-44cdb1743693", "is_cpo": true, "source": "autotrader", "seller_name": "OpenRoad Toyota Richmond", "rating": 4.5, "review_count": 4543, "brand_match": true, "grade": "A", "grade_score": 100, "google_match": "OpenRoad Toyota Richmond", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2030 or 160,000 km \u00b7 Factory bumper-to-bumper (3 yr / 60,000 km) \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2022, "title": "2022 Toyota RAV 4 Hybrid 2022 Toyota RAV4 Hybrid XSE AWD Sporty style, hyb", "price": 39995, "km": 56147, "location": "Maple Ridge, BC \u2022 40 km from you", "deal_score": 0.025792664862229104, "url": "https://www.autotrader.ca/offers/toyota-rav-4-2022-toyota-rav4-hybrid-xse-awd-sporty-style-hyb-gas-electric-hybrid-white-b6e56cdb-b607-4450-a822-37010ac7b98f", "is_cpo": false, "source": "autotrader", "seller_name": "Maple Ridge Hyundai", "rating": 4.5, "review_count": 1627, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Maple Ridge Hyundai", "warranty_label": "Factory", "warranty_detail": "Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "factory"}, {"year": 2024, "title": "2024 Toyota RAV 4 Hybrid XLE AWD | No Accidents, One Owner!", "price": 41499, "km": 83381, "location": "RICHMOND, BC \u2022 10 km from you", "deal_score": 0.032143620074998644, "url": "https://www.autotrader.ca/offers/toyota-rav-4-xle-awd--no-accidents-one-owner-gas-electric-hybrid-silver-da461bdf-6306-4afe-9faa-b2e877de63f8", "is_cpo": true, "source": "autotrader", "seller_name": "OpenRoad Toyota Richmond", "rating": 4.5, "review_count": 4543, "brand_match": true, "grade": "A", "grade_score": 100, "google_match": "OpenRoad Toyota Richmond", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2031 or 160,000 km \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid Hybrid XLE AWD - Local, One Owner, Certified!", "price": 41998, "km": 66521, "location": "BURNABY, BC \u2022 9 km from you", "deal_score": 0.055745325785254436, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-xle-awd-local-one-owner-certified-gas-electric-hybrid-silver-1c244c35-ddcb-463c-900c-12e87d79bf1b", "is_cpo": true, "source": "autotrader", "seller_name": "Destination Toyota", "rating": 4.7, "review_count": 5946, "brand_match": true, "grade": "A", "grade_score": 90, "google_match": "Destination Toyota Burnaby", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2030 or 160,000 km \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2023, "title": "2023 Toyota RAV 4 Hybrid Hybrid SE AWD + SUNROOF + HEATED SEATS + LIFTGATE", "price": 38888, "km": 134715, "location": "SURREY, BC \u2022 26 km from you", "deal_score": 0.08190311043277855, "url": "https://www.autotrader.ca/offers/toyota-rav-4-hybrid-se-awd-sunroof-heated-seats-liftgate-gas-electric-hybrid-grey-fdbd44d1-1319-4f25-8124-52d761621003", "is_cpo": true, "source": "autotrader", "seller_name": "Sukhi Bath Motors", "rating": 4.3, "review_count": 1507, "brand_match": false, "grade": "B", "grade_score": 60, "google_match": "Sukhi Bath Motors", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2030 or 160,000 km \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}, {"year": 2022, "title": "2022 Toyota RAV 4 Hybrid Limited AWD | No Accidents, Local BC Car!", "price": 40499, "km": 90567, "location": "RICHMOND, BC \u2022 10 km from you", "deal_score": 0.09300160521899888, "url": "https://www.autotrader.ca/offers/toyota-rav-4-limited-awd--no-accidents-local-bc-car-gas-electric-hybrid-blue-70471fdb-a864-4371-832a-e250ffb42a90", "is_cpo": true, "source": "autotrader", "seller_name": "OpenRoad Toyota Richmond", "rating": 4.5, "review_count": 4543, "brand_match": true, "grade": "A", "grade_score": 100, "google_match": "OpenRoad Toyota Richmond", "warranty_label": "CPO", "warranty_detail": "CPO powertrain \u2014 through year 2029 or 160,000 km \u00b7 Factory powertrain (5 yr / 100,000 km) \u00b7 Hybrid components (10 yr / 240,000 km in Canada)", "warranty_cls": "cpo"}]}], "dealers": [{"id": "47943967", "name": "OpenRoad Toyota Richmond", "google_match": "OpenRoad Toyota Richmond", "rating": 4.5, "review_count": 4543, "brand_match": true, "inventory": 5, "cpo_count": 4, "grade": "A", "grade_score": 100}, {"id": "48015876", "name": "Destination Toyota", "google_match": "Destination Toyota Burnaby", "rating": 4.7, "review_count": 5946, "brand_match": true, "inventory": 1, "cpo_count": 1, "grade": "A", "grade_score": 90}, {"id": "48301594", "name": "Regency Toyota-Vancouver", "google_match": "Regency Toyota Vancouver", "rating": 4.6, "review_count": 1186, "brand_match": true, "inventory": 1, "cpo_count": 1, "grade": "A", "grade_score": 90}, {"id": "47943696", "name": "Morrey Mazda of the Northshore", "google_match": "Morrey Mazda of the Northshore", "rating": 4.5, "review_count": 733, "brand_match": true, "inventory": 1, "cpo_count": 1, "grade": "A", "grade_score": 90}, {"id": "47944416", "name": "Jim Pattison Toyota Northshore", "google_match": "Jim Pattison Toyota Northshore", "rating": 4.4, "review_count": 1149, "brand_match": true, "inventory": 3, "cpo_count": 1, "grade": "A", "grade_score": 85}, {"id": "47946337", "name": "Kelowna Mazda", "google_match": "Kelowna Mazda", "rating": 4.7, "review_count": 1180, "brand_match": true, "inventory": 1, "cpo_count": 0, "grade": "A", "grade_score": 80}, {"id": "47945496", "name": "Abbotsford Mazda", "google_match": "Abbotsford Mazda", "rating": 4.7, "review_count": 794, "brand_match": true, "inventory": 1, "cpo_count": 0, "grade": "A", "grade_score": 80}, {"id": "47944581", "name": "Harris Mazda", "google_match": "Harris Mazda", "rating": 4.4, "review_count": 728, "brand_match": true, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 70}, {"id": "47944863", "name": "Midway Mazda", "google_match": "Midway Mazda", "rating": 4.1, "review_count": 323, "brand_match": true, "inventory": 1, "cpo_count": 1, "grade": "B", "grade_score": 70}, {"id": "47942011", "name": "Langley Toyota", "google_match": "Langley Toyota", "rating": 4.4, "review_count": 4008, "brand_match": false, "inventory": 1, "cpo_count": 1, "grade": "B", "grade_score": 60}, {"id": "47939833", "name": "Carter GM", "google_match": "Carter Chevrolet Cadillac Buick GMC", "rating": 4.5, "review_count": 2373, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "50771942", "name": "Maple Ridge Hyundai", "google_match": "Maple Ridge Hyundai", "rating": 4.5, "review_count": 1627, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "47940184", "name": "Sukhi Bath Motors", "google_match": "Sukhi Bath Motors", "rating": 4.3, "review_count": 1507, "brand_match": false, "inventory": 1, "cpo_count": 1, "grade": "B", "grade_score": 60}, {"id": "47944651", "name": "Dearborn Ford", "google_match": "Dearborn Ford Kamloops", "rating": 4.6, "review_count": 1479, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "47945430", "name": "Nanaimo Mitsubishi", "google_match": "Nanaimo Mitsubishi", "rating": 4.5, "review_count": 1474, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "48538127", "name": "2566971 Alberta Ltd. dba River Valley Ford", "google_match": "River Valley Ford", "rating": 4.7, "review_count": 1092, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "47940843", "name": "Audi Downtown Vancouver", "google_match": "Audi Downtown Vancouver", "rating": 4.2, "review_count": 877, "brand_match": false, "inventory": 1, "cpo_count": 1, "grade": "B", "grade_score": 60}, {"id": "47946439", "name": "White Rock Honda", "google_match": "White Rock Honda", "rating": 4.1, "review_count": 849, "brand_match": false, "inventory": 1, "cpo_count": 1, "grade": "B", "grade_score": 60}, {"id": "47941074", "name": "North Shore Kia", "google_match": "North Shore Kia", "rating": 4.5, "review_count": 844, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "47944418", "name": "BCS Auto Sales", "google_match": "BCS Auto Sales", "rating": 4.6, "review_count": 659, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "47939023", "name": "Heartland Toyota", "google_match": "Heartland Toyota", "rating": 4.5, "review_count": 110, "brand_match": true, "inventory": 1, "cpo_count": 0, "grade": "B", "grade_score": 60}, {"id": "47940954", "name": "Harris Victoria Dodge", "google_match": "Harris Dodge", "rating": 4.3, "review_count": 2577, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 50}, {"id": "47940227", "name": "Nissan Of Nanaimo", "google_match": "Nissan of Nanaimo", "rating": 4.2, "review_count": 953, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 50}, {"id": "47941877", "name": "Bannister Chilliwack Chrysler Dodge Jeep Ram", "google_match": "Bannister Chilliwack Chrysler Dodge Jeep Ram", "rating": 4.3, "review_count": 816, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 50}, {"id": "47942678", "name": "Variety Auto Sales", "google_match": "Variety Auto Sales", "rating": 4.1, "review_count": 597, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 50}, {"id": "47942104", "name": "King's Auto Sales Ltd.", "google_match": "King's Auto Sales Ltd.", "rating": 4.9, "review_count": 299, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 50}, {"id": "47943969", "name": "King George Nissan", "google_match": "King George Nissan", "rating": 4.3, "review_count": 499, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 40}, {"id": "48536152", "name": "Infinite Ride Auto Ltd.", "google_match": "Infinite Ride Auto", "rating": 4.8, "review_count": 91, "brand_match": false, "inventory": 1, "cpo_count": 0, "grade": "C", "grade_score": 40}]}</script>
+<script>
+(function () {
+  const payload = JSON.parse(document.getElementById('data').textContent);
+  document.getElementById('generated').textContent = payload.generated;
+  document.getElementById('total').textContent = payload.total;
+  document.getElementById('dealer-count').textContent = (payload.dealers || []).length;
+
+  const tabsEl = document.getElementById('tabs');
+  const panelsEl = document.getElementById('panels');
+
+  const esc = s => (s == null ? '' : String(s).replace(/[<>&"]/g,
+    c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])));
+
+  const flagFor = (s) => {
+    if (s < -0.10) return ['🔥 Hot', 'fire'];
+    if (s < -0.03) return ['✅ Good', 'good'];
+    if (s <  0.05) return ['· Fair', 'fair'];
+    return ['⚠ Above', 'bad'];
+  };
+
+  const fmtPct = (s) => (s >= 0 ? '+' : '') + (s * 100).toFixed(1) + '%';
+  const fmtMoney = (n) => n == null ? '—' : '$' + n.toLocaleString();
+  const fmtKm = (n) => n == null ? '—' : n.toLocaleString() + ' km';
+
+  function gradeBadge(g, score) {
+    const cls = (g && /^[A-F]$/.test(g)) ? g : 'U';
+    const tip = score != null ? ` title="score ${score}/110"` : '';
+    return `<span class="grade ${cls}"${tip}>${esc(g || '?')}</span>`;
+  }
+
+  function dealerCell(it) {
+    const stars = it.rating != null ? `⭐${it.rating} (${(it.review_count || 0).toLocaleString()})` : 'no Google data';
+    const badges = [];
+    if (it.brand_match) badges.push('<span class="badge brand" title="Brand-name dealer">brand</span>');
+    if (it.is_cpo)      badges.push('<span class="badge cpo" title="Certified Pre-Owned listing">CPO</span>');
+    return `
+      <div class="dealer-cell">
+        <div>${gradeBadge(it.grade, it.grade_score)}
+          <span class="name" title="${esc(it.seller_name || '')}">${esc(it.seller_name || '—')}</span>
+          ${badges.join('')}
+        </div>
+        <div class="meta">${stars}</div>
+      </div>`;
+  }
+
+  const GRADE_RANK = { A:5, B:4, C:3, D:2, F:1 };
+
+  // ── Match-score matrix ────────────────────────────────────────────────
+  // Each dimension scores a listing 0-100 on its own axis. The user's slider
+  // weight (0-5) determines that axis's contribution to the final match %.
+  const MATRIX_DIMS = [
+    { key: 'deal',     label: 'Below-market price (deal score)',
+      score: it => it.deal_score == null ? null : Math.max(0, Math.min(100, 50 - it.deal_score * 500)) },
+    { key: 'mileage',  label: 'Low mileage',
+      score: it => it.km == null ? null : Math.max(0, Math.min(100, 100 - (it.km / 1500))) },
+    { key: 'year',     label: 'Newer model year',
+      score: it => it.year == null ? null : Math.max(0, Math.min(100, (it.year - 2018) * 20)) },
+    { key: 'dealer',   label: 'Dealer trustworthiness (Google + brand)',
+      score: it => (GRADE_RANK[it.grade] || 0) * 20 },
+    { key: 'warranty', label: 'Remaining warranty coverage',
+      score: it => (WARR_RANK[it.warranty_cls] || 0) * 25 },
+    { key: 'brand',    label: 'Brand-name dealer (Toyota/Mazda dealer for that make)',
+      score: it => it.brand_match ? 100 : 0 },
+    { key: 'cpo',      label: 'CPO (Certified Pre-Owned) badge',
+      score: it => it.is_cpo ? 100 : 0 },
+  ];
+  const PRESET_BALANCED = { deal: 3, mileage: 2, year: 2, dealer: 3, warranty: 3, brand: 2, cpo: 2 };
+  const MATRIX_KEY = 'car-finder-matrix-v1';
+
+  let matrixState = (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(MATRIX_KEY) || '{}');
+      if (saved && saved.weights) return saved;
+    } catch (e) {}
+    const zero = {};
+    MATRIX_DIMS.forEach(d => zero[d.key] = 0);
+    return { active: false, weights: zero };
+  })();
+
+  const matrixListeners = [];
+  function notifyMatrix() {
+    matrixListeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } });
+    try { localStorage.setItem(MATRIX_KEY, JSON.stringify(matrixState)); } catch (e) {}
+  }
+
+  function matchScore(it) {
+    if (!matrixState.active) return null;
+    let total = 0, sum = 0;
+    for (const d of MATRIX_DIMS) {
+      const w = matrixState.weights[d.key] || 0;
+      if (w === 0) continue;
+      const s = d.score(it);
+      if (s == null || isNaN(s)) continue;
+      total += w;
+      sum += w * Math.max(0, Math.min(100, s));
+    }
+    if (total === 0) return null;
+    return Math.round(sum / total);
+  }
+
+  function matchBar(it) {
+    const m = matchScore(it);
+    if (m == null) return '<span class="match-bar low" title="No score">—</span>';
+    let cls = 'poor';
+    if (m >= 80) cls = 'high';
+    else if (m >= 65) cls = 'good';
+    else if (m >= 50) cls = 'med';
+    else if (m >= 35) cls = 'low';
+    return `<span class="match-bar ${cls}">${m}%</span>`;
+  }
+
+  function setupMatrixUI() {
+    const grid = document.getElementById('matrix-grid');
+    const toggle = document.getElementById('matrix-toggle');
+    const panel = document.getElementById('matrix-panel');
+
+    // build sliders
+    grid.innerHTML = MATRIX_DIMS.map(d => `
+      <div class="matrix-row">
+        <span class="lbl">${esc(d.label)}</span>
+        <input type="range" min="0" max="5" step="1" data-dim="${d.key}"
+               value="${matrixState.weights[d.key] || 0}">
+        <span class="val" data-val="${d.key}">${matrixState.weights[d.key] || 0}</span>
+      </div>`).join('');
+
+    function updateToggleLabel() {
+      toggle.classList.toggle('on', matrixState.active);
+      toggle.textContent = matrixState.active
+        ? '🎯 Customize match score: ON'
+        : '🎯 Customize match score: OFF';
+    }
+    function syncSlidersToState() {
+      MATRIX_DIMS.forEach(d => {
+        const v = matrixState.weights[d.key] || 0;
+        const sl = grid.querySelector(`input[data-dim="${d.key}"]`);
+        const val = grid.querySelector(`.val[data-val="${d.key}"]`);
+        if (sl) sl.value = v;
+        if (val) val.textContent = v;
+      });
+    }
+    function readSliders() {
+      MATRIX_DIMS.forEach(d => {
+        const sl = grid.querySelector(`input[data-dim="${d.key}"]`);
+        const val = grid.querySelector(`.val[data-val="${d.key}"]`);
+        const v = parseInt(sl.value, 10) || 0;
+        matrixState.weights[d.key] = v;
+        if (val) val.textContent = v;
+      });
+    }
+
+    grid.addEventListener('input', e => {
+      if (e.target.matches('input[type=range]')) {
+        readSliders();
+        if (matrixState.active) notifyMatrix();
+      }
+    });
+
+    toggle.addEventListener('click', () => panel.classList.toggle('open'));
+
+    document.getElementById('matrix-apply').addEventListener('click', () => {
+      readSliders();
+      const anyWeight = MATRIX_DIMS.some(d => (matrixState.weights[d.key] || 0) > 0);
+      matrixState.active = anyWeight;
+      updateToggleLabel();
+      notifyMatrix();
+    });
+    document.getElementById('matrix-preset').addEventListener('click', () => {
+      matrixState.weights = { ...PRESET_BALANCED };
+      matrixState.active = true;
+      syncSlidersToState();
+      updateToggleLabel();
+      notifyMatrix();
+    });
+    document.getElementById('matrix-clear').addEventListener('click', () => {
+      MATRIX_DIMS.forEach(d => matrixState.weights[d.key] = 0);
+      matrixState.active = false;
+      syncSlidersToState();
+      updateToggleLabel();
+      notifyMatrix();
+    });
+
+    updateToggleLabel();
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
+  // BC: 12% combined tax (5% GST + 7% PST dealer, OR 12% PST private)
+  // Doc fee dealer ~$499, ICBC transfer for private ~$80.
+  const TAX_RATE = 0.12;
+  const DEALER_FEE  = 499;
+  const PRIVATE_FEE = 80;
+
+  function feeFor(src) {
+    return src === 'kijiji' ? PRIVATE_FEE : DEALER_FEE;
+  }
+  function totalPrice(it) {
+    if (it.price == null) return null;
+    return Math.round(it.price * (1 + TAX_RATE) + feeFor(it.source));
+  }
+  function totalBreakdown(it) {
+    if (it.price == null) return '';
+    const tax = Math.round(it.price * TAX_RATE);
+    const fee = feeFor(it.source);
+    const total = it.price + tax + fee;
+    const feeLabel = it.source === 'kijiji' ? 'ICBC transfer (private)' : 'Doc fee + admin (dealer)';
+    return `<div class="breakdown"><table><tbody>
+      <tr><td class="lbl">Sticker price</td><td class="amt">${fmtMoney(it.price)}</td></tr>
+      <tr><td class="lbl">Tax (12%)</td>      <td class="amt">+${fmtMoney(tax)}</td></tr>
+      <tr><td class="lbl">${feeLabel}</td>    <td class="amt">+${fmtMoney(fee)}</td></tr>
+      <tr class="total"><td class="lbl">Out the door</td><td class="amt">${fmtMoney(total)}</td></tr>
+    </tbody></table></div>`;
+  }
+
+  function sourceBadge(src) {
+    const labels = { autotrader: 'AutoTrader', kijiji: 'Kijiji' };
+    const label = labels[src] || src || '?';
+    return `<span class="badge src-${src || 'unknown'}">${esc(label)}</span>`;
+  }
+
+  function warrantyCell(it) {
+    const cls = it.warranty_cls || 'unknown';
+    const label = it.warranty_label || '—';
+    const detail = it.warranty_detail || '';
+    return `<span class="warr ${cls}">${esc(label)}<span class="tip">${esc(detail)}</span></span>`;
+  }
+
+  function rowHtml(it) {
+    const [label, cls] = flagFor(it.deal_score);
+    const total = totalPrice(it);
+    const totalCell = total == null
+      ? '<span class="total-cell">—</span>'
+      : `<span class="total-cell"><strong>${fmtMoney(total)}</strong>${totalBreakdown(it)}</span>`;
+    return `<tr>
+        <td class="col-match">${matchBar(it)}</td>
+        <td class="deal ${cls}">${label} ${fmtPct(it.deal_score)}</td>
+        <td>${it.year ?? '?'}</td>
+        <td>${esc(it.title)} ${sourceBadge(it.source)}</td>
+        <td class="price">${totalCell}</td>
+        <td>${fmtKm(it.km)}</td>
+        <td>${dealerCell(it)}</td>
+        <td>${warrantyCell(it)}</td>
+        <td class="hide-sm">${esc(it.location || '')}</td>
+        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a></td>
+      </tr>`;
+  }
+
+  // Higher = more reassuring warranty status, used for sorting/filtering
+  const WARR_RANK = { cpo: 4, factory: 3, hybrid: 2, expired: 1, unknown: 0 };
+
+  function applyFilterSort(items, state) {
+    const minRank = GRADE_RANK[state.minGrade] || 0;
+    let out = items.filter(it => {
+      if (state.source !== 'ALL' && it.source !== state.source) return false;
+      if (state.brandOnly && !it.brand_match) return false;
+      if (state.cpoOnly   && !it.is_cpo)      return false;
+      if (state.minGrade !== 'ALL') {
+        const r = GRADE_RANK[it.grade] || 0;
+        if (r < minRank) return false;
+      }
+      if (state.warranty !== 'ALL') {
+        if (state.warranty === 'not_expired') {
+          if (it.warranty_cls === 'expired' || it.warranty_cls === 'unknown') return false;
+        } else if (it.warranty_cls !== state.warranty) {
+          return false;
+        }
+      }
+      return true;
+    });
+    const k = state.sortKey;
+    const valueOf = (it) => {
+      if (k === 'total_price')  return totalPrice(it);
+      if (k === 'grade')        return GRADE_RANK[it.grade] || 0;
+      if (k === 'warranty_cls') return WARR_RANK[it.warranty_cls] || 0;
+      if (k === 'match')        return matchScore(it);
+      return it[k];
+    };
+    out.sort((a, b) => {
+      const av = valueOf(a), bv = valueOf(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'string') return av.localeCompare(bv) * state.sortDir;
+      return (av - bv) * state.sortDir;
+    });
+    return out;
+  }
+
+  function buildSearchPanel(search, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel' + (idx === 0 ? ' active' : '');
+    if (!search.items.length) {
+      panel.innerHTML = `<h2>${esc(search.name)}</h2><div class="empty">No scored listings yet.</div>`;
+      return panel;
+    }
+
+    const state = {
+      sortKey: 'deal_score', sortDir: 1,    // ascending = best deal first
+      source: 'ALL', brandOnly: false, cpoOnly: false, minGrade: 'ALL',
+      warranty: 'ALL',
+    };
+
+    panel.innerHTML = `
+      <h2>${esc(search.name)}</h2>
+      <div class="filter-bar">
+        <label>Source
+          <select data-fld="source">
+            <option value="ALL">All</option>
+            <option value="autotrader">AutoTrader</option>
+            <option value="kijiji">Kijiji</option>
+          </select>
+        </label>
+        <label>Min dealer grade
+          <select data-fld="minGrade">
+            <option value="ALL">All</option>
+            <option value="A">A only</option>
+            <option value="B">A or B</option>
+            <option value="C">A–C</option>
+            <option value="D">A–D</option>
+          </select>
+        </label>
+        <label>Warranty
+          <select data-fld="warranty">
+            <option value="ALL">All</option>
+            <option value="cpo">CPO only</option>
+            <option value="factory">Factory remaining</option>
+            <option value="hybrid">Hybrid coverage only</option>
+            <option value="not_expired">Any coverage left</option>
+          </select>
+        </label>
+        <label><input type="checkbox" data-fld="brandOnly"> Brand-name dealer only</label>
+        <label><input type="checkbox" data-fld="cpoOnly">
+          <span class="cpo-tooltip" title="Certified Pre-Owned: factory-backed warranty extension via the brand dealer (e.g. Toyota Certified Used, Mazda CPO).">CPO only</span>
+        </label>
+        <button class="reset" type="button">Reset</button>
+        <span class="count"></span>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="col-match sortable" data-key="match"
+              title="Personalized match based on your priorities — set in the Customize panel above.">Match</th>
+          <th class="sortable asc" data-key="deal_score">Deal</th>
+          <th class="sortable" data-key="year">Year</th>
+          <th class="sortable" data-key="title">Title</th>
+          <th class="sortable" data-key="total_price"
+              title="Out-the-door: sticker + 12% BC tax + doc/ICBC fee. Hover any cell for breakdown.">Total ⓘ</th>
+          <th class="sortable" data-key="km">KM</th>
+          <th class="sortable" data-key="grade">Dealer</th>
+          <th class="sortable" data-key="warranty_cls"
+              title="Warranty status derived from year, km, CPO badge, and the manufacturer's factory warranty schedule. Hover any cell for the specific coverage.">Warranty ⓘ</th>
+          <th class="hide-sm sortable" data-key="location">Location</th>
+          <th>Link</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="legend">
+        <span>🔥 &lt; -10% (hot)</span>
+        <span>✅ -10% to -3% (good)</span>
+        <span>· -3% to +5% (fair)</span>
+        <span>⚠ &gt; +5% (above market)</span>
+        <span class="grade A">A</span>
+        <span class="grade B">B</span>
+        <span class="grade C">C</span>
+        <span class="grade D">D</span>
+        <span class="grade F">F</span>
+      </div>`;
+
+    const tbody = panel.querySelector('tbody');
+    const countEl = panel.querySelector('.count');
+    const headers = panel.querySelectorAll('th.sortable');
+
+    function rerender() {
+      panel.classList.toggle('match-on', !!matrixState.active);
+      // If matrix just turned on/off, prefer sorting by match desc
+      if (matrixState.active && state.sortKey !== 'match') {
+        // don't override if user already chose another key intentionally
+      }
+      const out = applyFilterSort(search.items, state);
+      tbody.innerHTML = out.map(rowHtml).join('');
+      countEl.textContent = `${out.length} of ${search.items.length} listings`;
+      headers.forEach(h => {
+        h.classList.remove('asc', 'desc');
+        if (h.dataset.key === state.sortKey) {
+          h.classList.add(state.sortDir === 1 ? 'asc' : 'desc');
+        }
+      });
+    }
+    matrixListeners.push(rerender);
+
+    panel.querySelectorAll('[data-fld]').forEach(el => {
+      el.addEventListener('change', () => {
+        const f = el.dataset.fld;
+        state[f] = el.type === 'checkbox' ? el.checked : el.value;
+        rerender();
+      });
+    });
+    panel.querySelector('.reset').addEventListener('click', () => {
+      state.brandOnly = false; state.cpoOnly = false;
+      state.minGrade = 'ALL'; state.source = 'ALL'; state.warranty = 'ALL';
+      state.sortKey = 'deal_score'; state.sortDir = 1;
+      panel.querySelectorAll('input[type=checkbox][data-fld]').forEach(c => c.checked = false);
+      panel.querySelectorAll('select[data-fld]').forEach(s => s.value = 'ALL');
+      rerender();
+    });
+    headers.forEach(h => {
+      h.addEventListener('click', () => {
+        const k = h.dataset.key;
+        if (state.sortKey === k) state.sortDir = -state.sortDir;
+        else {
+          state.sortKey = k;
+          // ascending default for "smaller is better" columns
+          // descending default for "higher is better" (match, grade, year, etc.)
+          state.sortDir = (k === 'deal_score' || k === 'total_price' || k === 'km') ? 1 : -1;
+        }
+        rerender();
+      });
+    });
+
+    rerender();
+    return panel;
+  }
+
+  function buildDealersPanel(dealers, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel';
+    if (!dealers || !dealers.length) {
+      panel.innerHTML = `<h2>Dealers</h2><div class="empty">No dealers yet.</div>`;
+      return panel;
+    }
+    const state = {
+      sortKey: 'grade_score', sortDir: -1,
+      brandOnly: false, cpoOnly: false, minGrade: 'ALL',
+    };
+    function dealerRow(d) {
+      return `<tr>
+        <td>${gradeBadge(d.grade, d.grade_score)}</td>
+        <td>${esc(d.name || '—')}${d.brand_match ? ' <span class="badge brand">brand</span>' : ''}</td>
+        <td>${d.rating != null ? '⭐' + d.rating : '—'}</td>
+        <td>${(d.review_count || 0).toLocaleString()}</td>
+        <td>${d.inventory || 0}</td>
+        <td>${d.cpo_count || 0}</td>
+        <td class="hide-sm">${esc(d.google_match || '')}</td>
+      </tr>`;
+    }
+    function rerender() {
+      const minRank = GRADE_RANK[state.minGrade] || 0;
+      let out = dealers.filter(d => {
+        if (state.brandOnly && !d.brand_match)    return false;
+        if (state.cpoOnly   && !(d.cpo_count > 0)) return false;
+        if (state.minGrade !== 'ALL' && (GRADE_RANK[d.grade] || 0) < minRank) return false;
+        return true;
+      });
+      const k = state.sortKey;
+      out.sort((a, b) => {
+        let av = a[k], bv = b[k];
+        if (k === 'grade') { av = GRADE_RANK[av] || 0; bv = GRADE_RANK[bv] || 0; }
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === 'string') return av.localeCompare(bv) * state.sortDir;
+        return (av - bv) * state.sortDir;
+      });
+      tbody.innerHTML = out.map(dealerRow).join('');
+      countEl.textContent = `${out.length} of ${dealers.length} dealers`;
+      headers.forEach(h => {
+        h.classList.remove('asc', 'desc');
+        if (h.dataset.key === state.sortKey) {
+          h.classList.add(state.sortDir === 1 ? 'asc' : 'desc');
+        }
+      });
+    }
+    panel.innerHTML = `
+      <h2>Dealer reliability ranking</h2>
+      <div class="panel-meta">Grade = rating + review count + brand-match + CPO + inventory size. Hover the badge for raw score.</div>
+      <div class="filter-bar">
+        <label>Min grade
+          <select data-fld="minGrade">
+            <option value="ALL">All</option>
+            <option value="A">A only</option>
+            <option value="B">A or B</option>
+            <option value="C">A–C</option>
+            <option value="D">A–D</option>
+          </select>
+        </label>
+        <label><input type="checkbox" data-fld="brandOnly"> Brand-name only</label>
+        <label><input type="checkbox" data-fld="cpoOnly"> Has CPO listings</label>
+        <button class="reset" type="button">Reset</button>
+        <span class="count"></span>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="sortable desc" data-key="grade_score">Grade</th>
+          <th class="sortable" data-key="name">Dealer</th>
+          <th class="sortable" data-key="rating">Rating</th>
+          <th class="sortable" data-key="review_count">Reviews</th>
+          <th class="sortable" data-key="inventory">In our results</th>
+          <th class="sortable" data-key="cpo_count">CPO listings</th>
+          <th class="hide-sm">Google match</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>`;
+    const tbody   = panel.querySelector('tbody');
+    const countEl = panel.querySelector('.count');
+    const headers = panel.querySelectorAll('th.sortable');
+
+    panel.querySelectorAll('[data-fld]').forEach(el => {
+      el.addEventListener('change', () => {
+        const f = el.dataset.fld;
+        state[f] = el.type === 'checkbox' ? el.checked : el.value;
+        rerender();
+      });
+    });
+    panel.querySelector('.reset').addEventListener('click', () => {
+      state.brandOnly = false; state.cpoOnly = false; state.minGrade = 'ALL';
+      state.sortKey = 'grade_score'; state.sortDir = -1;
+      panel.querySelectorAll('input[type=checkbox][data-fld]').forEach(c => c.checked = false);
+      panel.querySelector('select[data-fld=minGrade]').value = 'ALL';
+      rerender();
+    });
+    headers.forEach(h => {
+      h.addEventListener('click', () => {
+        const k = h.dataset.key;
+        if (state.sortKey === k) state.sortDir = -state.sortDir;
+        else { state.sortKey = k; state.sortDir = -1; }
+        rerender();
+      });
+    });
+    rerender();
+    return panel;
+  }
+
+  function makeTab(label, idx, isActive) {
+    const t = document.createElement('button');
+    t.className = 'tab' + (isActive ? ' active' : '');
+    t.textContent = label;
+    t.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('panel-' + idx).classList.add('active');
+    };
+    return t;
+  }
+
+  payload.searches.forEach((search, idx) => {
+    tabsEl.appendChild(makeTab(`${search.name} (${search.items.length})`, idx, idx === 0));
+    panelsEl.appendChild(buildSearchPanel(search, idx));
+  });
+
+  const dealersIdx = payload.searches.length;
+  tabsEl.appendChild(makeTab(`🏪 Dealers (${(payload.dealers || []).length})`, dealersIdx, false));
+  panelsEl.appendChild(buildDealersPanel(payload.dealers || [], dealersIdx));
+
+  setupMatrixUI();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Used Car Pre-Purchase Checklist — BC</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    min-height: 100vh; padding: 20px; color: #1a1a1a;
+  }
+  .container {
+    max-width: 980px; margin: 0 auto; background: #fff;
+    border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden;
+  }
+  header {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: #fff; padding: 28px 32px;
+  }
+  header h1 { font-size: 1.9em; margin-bottom: 6px; }
+  header p  { opacity: 0.85; font-size: 0.95em; }
+  .top-nav {
+    padding: 14px 32px; background: #f5f7fb; border-bottom: 1px solid #e5e7eb;
+    display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.9em;
+  }
+  .top-nav a { color: #2a5298; text-decoration: none; font-weight: 500; }
+  .top-nav a:hover { text-decoration: underline; }
+  .top-nav .actions { margin-left: auto; display: flex; gap: 12px; }
+  .top-nav button {
+    background: #2a5298; color: #fff; border: none; padding: 6px 14px;
+    border-radius: 6px; cursor: pointer; font-size: 0.9em;
+  }
+  .top-nav button:hover { background: #1e3c72; }
+  .top-nav button.ghost { background: #fff; color: #2a5298; border: 1px solid #c8d2e0; }
+  main { padding: 28px 32px 40px; }
+  .intro {
+    background: #fff8e1; border-left: 4px solid #f5b400; padding: 14px 18px;
+    border-radius: 6px; margin-bottom: 28px; font-size: 0.95em; color: #5a4500;
+  }
+  .intro strong { color: #3d2f00; }
+  section { margin-bottom: 28px; }
+  h2 {
+    font-size: 1.2em; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb;
+    margin-bottom: 12px; color: #203a43;
+  }
+  h3 { font-size: 1em; color: #2a5298; margin: 14px 0 6px; font-weight: 600; }
+  ul { list-style: none; margin-left: 4px; }
+  li {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 7px 0; font-size: 0.95em; line-height: 1.5;
+    border-bottom: 1px dashed #f1f3f7;
+  }
+  li:last-child { border-bottom: none; }
+  li input[type="checkbox"] {
+    margin-top: 4px; width: 18px; height: 18px; cursor: pointer;
+    accent-color: #2a5298; flex-shrink: 0;
+  }
+  li label { cursor: pointer; flex: 1; }
+  li.done label { text-decoration: line-through; color: #888; }
+  .note { color: #666; font-size: 0.85em; font-style: italic; }
+  .hybrid {
+    background: #e8f5e9; border-left: 4px solid #2e7d32; padding: 10px 14px;
+    border-radius: 4px; margin: 8px 0; font-size: 0.88em; color: #1b5e20;
+  }
+  .warn {
+    background: #ffebee; border-left: 4px solid #c62828; padding: 10px 14px;
+    border-radius: 4px; margin: 8px 0; font-size: 0.88em; color: #b71c1c;
+  }
+  .progress {
+    position: sticky; top: 0; background: #fff; padding: 10px 32px;
+    border-bottom: 1px solid #e5e7eb; font-size: 0.85em; color: #555;
+    z-index: 10;
+  }
+  .bar { height: 6px; background: #eef0f3; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .bar > div { height: 100%; background: linear-gradient(90deg, #2a5298, #4caf50); width: 0; transition: width 0.2s; }
+  @media print {
+    body { background: #fff; padding: 0; color: #000; }
+    .container { box-shadow: none; border-radius: 0; }
+    .top-nav, .progress { display: none; }
+    header { background: #fff !important; color: #000 !important; }
+    li input[type="checkbox"] { -webkit-print-color-adjust: exact; }
+  }
+  @media (max-width: 700px) {
+    body { padding: 8px; }
+    header, .top-nav, .progress, main { padding-left: 16px; padding-right: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🔍 Used Car Pre-Purchase Checklist</h1>
+    <p>BC-specific. Tuned for hybrids (e.g. RAV4 Hybrid) and compact SUVs (e.g. CX-5). Print, save, or use on your phone at the viewing.</p>
+  </header>
+  <div class="top-nav">
+    <a href="index.html">← Back to deals</a>
+    <div class="actions">
+      <button class="ghost" onclick="resetChecks()">Reset</button>
+      <button onclick="window.print()">Print / save PDF</button>
+    </div>
+  </div>
+  <div class="progress">
+    <span><strong id="pct">0%</strong> complete · <span id="counts">0 / 0</span></span>
+    <div class="bar"><div id="bar"></div></div>
+  </div>
+  <main>
+    <div class="intro">
+      <strong>Why a "🔥 Hot" deal can still be bad:</strong> the price-vs-(year+km) regression doesn't see accident history, service records, owner count, trim, or rental/fleet use. If a 2-3 year old car has 100k+ km, assume fleet/rideshare unless service history proves otherwise. Use this checklist before handing over money.
+    </div>
+
+    <section>
+      <h2>1. Before you go (online, 10 min)</h2>
+      <ul>
+        <li><input type="checkbox"><label><strong>ICBC Vehicle Information Report (VIR)</strong> — $20 at <a href="https://onlineservices.icbc.com/" target="_blank" rel="noopener">icbc.com</a>. Shows BC accident claims, total-loss history, registration history. <span class="note">Most important single document.</span></label></li>
+        <li><input type="checkbox"><label><strong>CarFax Canada report</strong> — confirms out-of-province history, US imports, lien status. Often the dealer will provide this free.</label></li>
+        <li><input type="checkbox"><label><strong>Lien check (PPSA)</strong> — search at <a href="https://www.bconline.gov.bc.ca/" target="_blank" rel="noopener">bconline.gov.bc.ca</a> by VIN. If a lien exists, the seller must clear it before transfer.</label></li>
+        <li><input type="checkbox"><label><strong>Recall check</strong> — VIN at <a href="https://www.toyota.ca/recall/" target="_blank" rel="noopener">toyota.ca/recall</a> or <a href="https://www.mazda.ca/en/owners/safety-recalls/" target="_blank" rel="noopener">mazda.ca recalls</a>. Confirm any open campaigns will be done before sale.</label></li>
+        <li><input type="checkbox"><label><strong>Pre-approved financing</strong> from your bank or credit union — gives you a real rate to compare dealer financing against.</label></li>
+        <li><input type="checkbox"><label><strong>Out-the-door budget</strong>: vehicle + 12% tax (5% GST + 7% PST from a dealer, or 12% PST private), $80–$150 doc fee at dealer, $80 ICBC transfer.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>2. Documents (at the viewing)</h2>
+      <ul>
+        <li><input type="checkbox"><label><strong>VIN matches</strong> across: dashboard plate, doorjamb sticker, registration, VIR. Mismatch = walk away.</label></li>
+        <li><input type="checkbox"><label><strong>Service records</strong> — dealer stamps preferred. Confirm regular oil changes, brake fluid flush, coolant flush at intervals.</label></li>
+        <li><input type="checkbox"><label><strong>Number of previous owners</strong> — 1–2 ideal. 3+ on a 3-year-old car is a flag (rental, fleet, or rapidly resold).</label></li>
+        <li><input type="checkbox"><label><strong>Out-of-province?</strong> If yes, it needs a BC inspection certificate before registration. Quebec/Ontario cars often have winter-salt rust.</label></li>
+        <li><input type="checkbox"><label><strong>Title brand</strong>: clean / rebuilt / salvage / non-repairable. Anything but clean = walk away unless you know exactly what you're doing.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. Exterior walk-around</h2>
+      <ul>
+        <li><input type="checkbox"><label><strong>Panel gaps</strong> even all the way around (hood, doors, trunk). Mismatch = bodywork.</label></li>
+        <li><input type="checkbox"><label><strong>Paint match</strong> in daylight. Different shades on adjacent panels = repaint = past damage.</label></li>
+        <li><input type="checkbox"><label><strong>Overspray</strong> on rubber seals, glass edges, plastic trim, wheel wells.</label></li>
+        <li><input type="checkbox"><label><strong>Tires</strong>: matching brand, even wear, ≥4mm tread (penny test: cover Queen's crown). DOT date code on sidewall (4 digits = ww/yy) — &gt;6 yrs old = budget for new tires.</label></li>
+        <li><input type="checkbox"><label><strong>Wheel curb rash</strong>, cracked alloys (especially aggressive after potholes).</label></li>
+        <li><input type="checkbox"><label><strong>Underbody</strong>: rust on subframe / brake lines / exhaust / spring perches. Coastal BC ≠ salt-belt, but check anyway.</label></li>
+        <li><input type="checkbox"><label><strong>Glass</strong>: chips, cracks, repairs. Windshield replacement is $400–$900.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>4. Engine bay (cold start preferred)</h2>
+      <ul>
+        <li><input type="checkbox"><label><strong>Engine oil</strong>: amber → light brown OK. Black or milky = problem. Level on dipstick within range.</label></li>
+        <li><input type="checkbox"><label><strong>Coolant</strong>: clear pink / red / blue. Brown or oily = head gasket suspect.</label></li>
+        <li><input type="checkbox"><label><strong>Brake fluid</strong>: clear → light yellow OK. Dark brown = overdue flush.</label></li>
+        <li><input type="checkbox"><label><strong>Transmission fluid</strong> (where dipstick exists): bright red, no burnt smell. eCVT in hybrids has no dipstick — check service history.</label></li>
+        <li><input type="checkbox"><label><strong>Battery terminals</strong>: no corrosion. 12V battery age sticker (replace ~5 yr).</label></li>
+        <li><input type="checkbox"><label><strong>Belts &amp; hoses</strong>: no cracks, no bulges, no oil-soaked patches.</label></li>
+        <li><input type="checkbox"><label><strong>Leaks under car</strong> after it's been parked: oil (brown), coolant (pink/green), trans (red), water from AC (OK).</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>5. Hybrid-specific (RAV4 Hybrid, etc.)</h2>
+      <div class="hybrid">
+        <strong>Toyota hybrid warranty (Canada):</strong> hybrid components covered <strong>10 years / 240,000 km</strong> from in-service date (or 8 yr / 160,000 on older models). Verify in-service date — it's the warranty start, not model year.
+      </div>
+      <ul>
+        <li><input type="checkbox"><label><strong>Hybrid battery health report</strong> — ask the dealer to pull a Techstream / scan-tool block voltage report. Cells should be balanced within 0.2V.</label></li>
+        <li><input type="checkbox"><label><strong>EV-only mode works</strong>: at &lt;40 km/h with high battery, engine should stay off briefly. Listen for unusual whines.</label></li>
+        <li><input type="checkbox"><label><strong>Engine-to-EV transitions are smooth</strong> — no jerks, no lurching, no warning lights.</label></li>
+        <li><input type="checkbox"><label><strong>Regenerative braking</strong> is smooth, no grinding. (Brake pads last longer on hybrids — 80k+ km is normal.)</label></li>
+        <li><input type="checkbox"><label><strong>Inverter coolant</strong> level/condition checked (separate loop from engine on most hybrids).</label></li>
+        <li><input type="checkbox"><label><strong>No hybrid system warning lights</strong> ever appeared (ask seller, check OBD-II for stored codes).</label></li>
+        <li><input type="checkbox"><label><strong>12V auxiliary battery</strong> — small AGM that wakes the hybrid system. Costs $200–300 to replace, lasts 5–7 yr.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>6. Interior &amp; electronics</h2>
+      <ul>
+        <li><input type="checkbox"><label>All <strong>warning lights</strong> illuminate at key-on, then go out (don't accept a car with a warning still on).</label></li>
+        <li><input type="checkbox"><label><strong>AC cold</strong>, heat hot, defroster works, all fan speeds.</label></li>
+        <li><input type="checkbox"><label><strong>Heated seats</strong>, heated steering wheel, sunroof open/close/tilt.</label></li>
+        <li><input type="checkbox"><label><strong>Infotainment</strong>: CarPlay/Android Auto pairs, Bluetooth, all speakers, backup camera image clear.</label></li>
+        <li><input type="checkbox"><label><strong>All windows + locks</strong> from each switch. Power tailgate (RAV4) opens/closes both modes.</label></li>
+        <li><input type="checkbox"><label>All <strong>exterior lights</strong>: low/high beam, fog, brake (have helper), turn, reverse, plate.</label></li>
+        <li><input type="checkbox"><label><strong>Wear pattern</strong> consistent with mileage. 100k-km car with shiny new steering wheel = odometer suspect.</label></li>
+        <li><input type="checkbox"><label><strong>Smell</strong>: no mildew (water leak), no smoke, no chemical (recent detail covering odor).</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>7. Test drive (≥20 min, mixed)</h2>
+      <ul>
+        <li><input type="checkbox"><label><strong>Cold start</strong> if possible — listen for knock, blue/white smoke, rough idle.</label></li>
+        <li><input type="checkbox"><label><strong>Steering centered</strong> on a straight, level road. No pull, no vibration at 60–110 km/h.</label></li>
+        <li><input type="checkbox"><label><strong>Hard accel + hard brake</strong> in a safe spot — no shudder, no pulling, ABS engages cleanly.</label></li>
+        <li><input type="checkbox"><label><strong>Bumps &amp; potholes</strong> — no clunks, knocks, squeaks. Suspect bushings/struts if present.</label></li>
+        <li><input type="checkbox"><label><strong>AWD engages</strong> — find a loose surface (gravel shoulder), accelerate from stop, no binding/chattering.</label></li>
+        <li><input type="checkbox"><label><strong>Cruise control</strong> sets, holds, cancels.</label></li>
+        <li><input type="checkbox"><label><strong>Highway test</strong> at 100+ km/h — no vibrations (alignment / wheel balance / bent rim).</label></li>
+        <li><input type="checkbox"><label>After test drive: re-check <strong>under hood + under car</strong> for fresh leaks.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>8. Independent inspection (highly recommended)</h2>
+      <div class="warn">
+        <strong>Best $150 you'll spend.</strong> Insist on a pre-purchase inspection (PPI) at an independent shop or the brand's dealer, on a hoist. Walk away if the seller refuses — they're hiding something.
+      </div>
+      <ul>
+        <li><input type="checkbox"><label>BCAA pre-purchase inspection ($120–$160) or independent shop. <strong>Brand dealer</strong> is best for hybrids — they have the diagnostic tools.</label></li>
+        <li><input type="checkbox"><label>Inspector reports: frame straightness, suspension components, brake life remaining, tire life remaining, fluid condition, OBD codes (current + pending + history).</label></li>
+        <li><input type="checkbox"><label>For hybrids: hybrid battery cell balance + state-of-health %.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>9. Negotiation &amp; close</h2>
+      <ul>
+        <li><input type="checkbox"><label><strong>Out-the-door price</strong> in writing — vehicle + tax + doc fee + transfer. No surprises.</label></li>
+        <li><input type="checkbox"><label>Decline aftermarket extras you don't want (paint protection, fabric guard, lojack, nitrogen tires, key insurance). Most are pure margin.</label></li>
+        <li><input type="checkbox"><label><strong>Extended warranty</strong> only via OEM (Toyota Extra Care / Mazda Added Protection). Third-party warranties are often worthless.</label></li>
+        <li><input type="checkbox"><label>Use deal-score evidence — "I have 5 comparable listings priced lower per km/year, here's the data." (Show the index page.)</label></li>
+        <li><input type="checkbox"><label>For private sale: meet at <strong>seller's bank</strong> for payment / lien clearance, or use ICBC Autoplan broker for inspection &amp; transfer.</label></li>
+        <li><input type="checkbox"><label>ICBC transfer within 10 days of sale. Bring: bill of sale, transfer/tax form, ID, current insurance.</label></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>10. Red flags that mean "walk away"</h2>
+      <div class="warn">Any one of these alone is a deal-breaker.</div>
+      <ul>
+        <li><input type="checkbox"><label>Seller refuses pre-purchase inspection, or "the shop is closed today."</label></li>
+        <li><input type="checkbox"><label>VIN doesn't match in all locations.</label></li>
+        <li><input type="checkbox"><label>Title is salvage / rebuilt / non-repairable, or has a lien the seller hasn't disclosed.</label></li>
+        <li><input type="checkbox"><label>Active warning lights, or recently-cleared OBD codes (scanner shows "monitors not ready" → someone reset codes within ~50 km).</label></li>
+        <li><input type="checkbox"><label>Engine oil is milky, or there's coolant in oil / oil in coolant.</label></li>
+        <li><input type="checkbox"><label>Hybrid battery warning has appeared, or cell voltages are imbalanced &gt;0.3V.</label></li>
+        <li><input type="checkbox"><label>Frame damage / weld evidence on subframe / underbody bent.</label></li>
+        <li><input type="checkbox"><label>"Cash only, today only, my friend wants it too" pressure tactics.</label></li>
+      </ul>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'car-checklist-state-v1';
+  const boxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+  boxes.forEach((b, i) => b.dataset.idx = i);
+
+  function save() {
+    const state = boxes.map(b => b.checked);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+  function load() {
+    try {
+      const state = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      boxes.forEach((b, i) => { if (state[i]) b.checked = true; });
+    } catch (e) {}
+  }
+  function update() {
+    const total = boxes.length;
+    const done = boxes.filter(b => b.checked).length;
+    const pct = total ? Math.round(done / total * 100) : 0;
+    document.getElementById('pct').textContent = pct + '%';
+    document.getElementById('counts').textContent = done + ' / ' + total;
+    document.getElementById('bar').style.width = pct + '%';
+    boxes.forEach(b => b.closest('li').classList.toggle('done', b.checked));
+  }
+  boxes.forEach(b => b.addEventListener('change', () => { save(); update(); }));
+
+  // make label tap toggle the box
+  document.querySelectorAll('li').forEach(li => {
+    const cb = li.querySelector('input');
+    const lbl = li.querySelector('label');
+    if (cb && lbl) lbl.addEventListener('click', e => {
+      // anchor links inside label should still work
+      if (e.target.tagName === 'A') return;
+      e.preventDefault();
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change'));
+    });
+  });
+
+  window.resetChecks = function () {
+    if (!confirm('Clear all checks?')) return;
+    boxes.forEach(b => b.checked = false);
+    save(); update();
+  };
+
+  load(); update();
+})();
+</script>
+</body>
+</html>

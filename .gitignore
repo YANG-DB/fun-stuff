@@ -42,3 +42,24 @@ yarn-error.log*
 # OS generated files
 *.bak
 *.tmp
+
+# Secrets / credentials — DO NOT commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+credentials.json
+service-account*.json
+google-services.json
+.firebase/
+
+# Generated runtime artifacts
+car_deals.db
+deals_report.md
+__pycache__/
+*.pyc
+
+# Local Claude config
+.claude/

@@ -1,0 +1,1668 @@
+"""
+car_deal_finder.py
+==================
+Async Playwright scraper for BC used car listings on AutoTrader.ca.
+Scores listings against the market (linear regression on year + km),
+stores results in SQLite for resumability, and outputs a ranked Markdown report.
+
+Setup:
+    pip install playwright
+    playwright install chromium
+
+Run:
+    python car_deal_finder.py
+
+Edit the SEARCHES list below to change targets. Re-running is safe — the SQLite
+store dedupes by URL and re-scores against accumulated history.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import sqlite3
+import statistics
+import urllib.error
+import urllib.request
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from urllib.parse import urlencode
+
+from playwright.async_api import Page, async_playwright
+
+
+def load_env(path: str = ".env") -> None:
+    """Tiny .env loader — no python-dotenv dependency."""
+    p = Path(path)
+    if not p.exists():
+        return
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+load_env()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIG — edit these
+# ─────────────────────────────────────────────────────────────────────────────
+
+SEARCHES: list[dict] = [
+    {
+        "name": "Mazda CX-5 (learner car)",
+        "make": "mazda",
+        "model": "cx-5",
+        "year_min": 2020,
+        "year_max": 2022,
+        "price_min": 18_000,
+        "price_max": 28_000,
+        "km_max": 100_000,
+        "must_match": [r"\bAWD\b"],
+        "drop_match": [],
+    },
+    {
+        "name": "Toyota RAV4 Hybrid (family car)",
+        "make": "toyota",
+        "model": "rav4-hybrid",
+        "year_min": 2022,
+        "year_max": 2024,
+        "price_min": 30_000,
+        "price_max": 42_000,
+        "km_max": 80_000,
+        "must_match": [r"\bAWD\b", r"\bHybrid\b"],
+        "drop_match": [r"\bPrime\b"],   # exclude PHEV
+    },
+]
+
+LOCATION    = "Vancouver, BC"
+PROVINCE    = "British Columbia"
+RADIUS_KM   = 100
+DB_PATH     = "car_deals.db"
+REPORT_PATH = "deals_report.md"
+HTML_DIR    = "car-deals"     # output dir for the deployable site
+DEALER_CACHE_DAYS = 7         # re-fetch Google data weekly
+HEADLESS    = False           # False so you can solve CAPTCHAs by hand
+MAX_PAGES   = 5               # per search
+PAGE_SIZE   = 25
+PAUSE_MS    = 1500            # be polite
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA MODEL + STORAGE
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class Listing:
+    url: str
+    source: str
+    search_name: str
+    title: str
+    year: int | None
+    price: int | None
+    km: int | None
+    location: str | None
+    scraped_at: str
+    deal_score: float | None = None     # negative = below market = good
+    seller_id: str | None = None        # AutoTrader's data-customer-id
+    seller_name: str | None = None
+    is_cpo: int = 0                     # 1 if title/badge says Certified Pre-Owned
+
+def init_db(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS listings (
+            url         TEXT PRIMARY KEY,
+            source      TEXT,
+            search_name TEXT,
+            title       TEXT,
+            year        INTEGER,
+            price       INTEGER,
+            km          INTEGER,
+            location    TEXT,
+            scraped_at  TEXT,
+            deal_score  REAL
+        )
+    """)
+    # Idempotent schema migrations for fields added later
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(listings)").fetchall()}
+    for col, ddl in [
+        ("seller_id",   "TEXT"),
+        ("seller_name", "TEXT"),
+        ("is_cpo",      "INTEGER DEFAULT 0"),
+    ]:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {ddl}")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dealers (
+            customer_id   TEXT PRIMARY KEY,
+            name          TEXT,
+            google_match  TEXT,
+            google_addr   TEXT,
+            rating        REAL,
+            review_count  INTEGER,
+            brand_match   INTEGER DEFAULT 0,
+            inventory     INTEGER DEFAULT 0,
+            cpo_count     INTEGER DEFAULT 0,
+            grade         TEXT,
+            grade_score   INTEGER,
+            enriched_at   TEXT
+        )
+    """)
+    conn.commit()
+    return conn
+
+def save(conn: sqlite3.Connection, l: Listing) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO listings
+           (url, source, search_name, title, year, price, km,
+            location, scraped_at, deal_score, seller_id, seller_name, is_cpo)
+           VALUES
+           (:url,:source,:search_name,:title,:year,:price,:km,
+            :location,:scraped_at,:deal_score,:seller_id,:seller_name,:is_cpo)""",
+        asdict(l),
+    )
+    conn.commit()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PARSING
+# ─────────────────────────────────────────────────────────────────────────────
+
+PRICE_RE = re.compile(r"\$([\d,]+)")
+KM_RE    = re.compile(r"([\d,]+)\s*(?:km|kms|kilom)", re.I)
+YEAR_RE  = re.compile(r"\b(20\d{2}|19\d{2})\b")
+
+def grab_int(text: str | None, pat: re.Pattern) -> int | None:
+    if not text:
+        return None
+    m = pat.search(text)
+    return int(m.group(1).replace(",", "")) if m else None
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTOTRADER SCRAPER
+# ─────────────────────────────────────────────────────────────────────────────
+
+def autotrader_url(cfg: dict, page_num: int) -> str:
+    base = f"https://www.autotrader.ca/cars/{cfg['make']}/{cfg['model']}/bc/vancouver/"
+    qs = urlencode({
+        "rcp":   PAGE_SIZE,
+        "rcs":   (page_num - 1) * PAGE_SIZE,
+        "srt":   35,                          # sort: relevance
+        "prx":   RADIUS_KM,
+        "prv":   PROVINCE,
+        "loc":   LOCATION,
+        "hprc":  "True",
+        "wcp":   "True",
+        "pRng":  f"{cfg['price_min']},{cfg['price_max']}",
+        "yRng":  f"{cfg['year_min']},{cfg['year_max']}",
+        "kmRng": f",{cfg['km_max']}",
+    })
+    return f"{base}?{qs}"
+
+async def detect_blockers(page: Page) -> bool:
+    # Only flag a blocker if challenge UI is actually visible (avoids false positives
+    # from script bundles that mention "captcha" on normal pages).
+    try:
+        text = (await page.inner_text("body")).lower()
+    except Exception:
+        return False
+    return any(s in text for s in ("press & hold", "are you a human", "verify you are human", "checking your browser"))
+
+def _to_int(s: str | None) -> int | None:
+    if not s:
+        return None
+    s = s.strip().replace(",", "")
+    return int(s) if s.lstrip("-").isdigit() else None
+
+def kijiji_url(cfg: dict, page_num: int) -> str:
+    # all-BC, "Cars & Trucks" category (174), location l9007
+    slug = f"{cfg['make']}+{cfg['model']}".replace(" ", "-").lower()
+    if page_num <= 1:
+        return f"https://www.kijiji.ca/b-cars-trucks/british-columbia/{slug}/k0c174l9007?ad=offering"
+    return f"https://www.kijiji.ca/b-cars-trucks/british-columbia/page-{page_num}/{slug}/k0c174l9007?ad=offering"
+
+async def scrape_kijiji(page: Page, cfg: dict, conn: sqlite3.Connection) -> int:
+    """Scrape Kijiji.ca BC listings. Filters year/price/km client-side since
+    Kijiji's URL-param filters are touchy. No seller_id (private sellers common)."""
+    count = 0
+    for n in range(1, MAX_PAGES + 1):
+        url = kijiji_url(cfg, n)
+        print(f"  kijiji page {n} → {url}")
+        await page.goto(url, wait_until="domcontentloaded")
+        try:
+            await page.wait_for_selector('[data-testid="listing-card"]', timeout=12000)
+        except Exception:
+            pass
+        await page.evaluate("window.scrollBy(0, 2500)")
+        await page.wait_for_timeout(1500)
+
+        cards = await page.query_selector_all('[data-testid="listing-card"]')
+        if not cards:
+            print("  no Kijiji results — stopping pagination")
+            break
+        print(f"    found {len(cards)} cards on page")
+
+        for card in cards:
+            try:
+                a_el = await card.query_selector('[data-testid="listing-link"]')
+                if not a_el:
+                    continue
+                href = await a_el.get_attribute("href") or ""
+                if not href:
+                    continue
+                full = href if href.startswith("http") else f"https://www.kijiji.ca{href}"
+
+                title_el = await card.query_selector('[data-testid="listing-title"]')
+                title = ((await title_el.inner_text()).strip().replace("\n", " ")
+                         if title_el else (await a_el.inner_text()).strip())
+
+                # Kijiji's text search is loose — enforce model-name in title.
+                # e.g. "cx-5" search must literally say cx-5/cx5 (not cx-30 or cx-9).
+                model_words = re.split(r"[-+\s]+", cfg["model"].strip().lower())
+                # must hit each model token in title (e.g. "rav4" + "hybrid")
+                for tok in model_words:
+                    if tok and not re.search(rf"\b{re.escape(tok)}\b", title, re.I):
+                        title = ""
+                        break
+                if not title:
+                    continue
+
+                # Use the whole card text for must_match/drop_match (catches AWD/Hybrid).
+                card_text = (await card.inner_text()).replace("\n", " ")
+                if any(re.search(p, card_text, re.I) for p in cfg["drop_match"]):
+                    continue
+                if not all(re.search(p, card_text, re.I) for p in cfg["must_match"]):
+                    continue
+
+                # year from title
+                ym = YEAR_RE.search(title)
+                year = int(ym.group()) if ym else None
+
+                # price
+                p_el = await card.query_selector('[data-testid="autos-listing-price"]')
+                price = grab_int(await p_el.inner_text() if p_el else None, PRICE_RE)
+
+                # km — anywhere in card text
+                km = grab_int(card_text, KM_RE)
+
+                # location
+                loc_el = await card.query_selector('[data-testid="listing-location"]')
+                location = ((await loc_el.inner_text()).strip()
+                            if loc_el else None)
+
+                # apply user's range filters client-side
+                if year is not None and not (cfg["year_min"] <= year <= cfg["year_max"]):
+                    continue
+                if price is not None and not (cfg["price_min"] <= price <= cfg["price_max"]):
+                    continue
+                if km is not None and km > cfg["km_max"]:
+                    continue
+
+                is_cpo = 1 if re.search(r"\bcertified\b", card_text, re.I) else 0
+
+                # Kijiji listing IDs are unique. Source-prefix to avoid AT collision.
+                listing_id = await card.get_attribute("data-listingid")
+                listing = Listing(
+                    url=full,
+                    source="kijiji",
+                    search_name=cfg["name"],
+                    title=title,
+                    year=year,
+                    price=price,
+                    km=km,
+                    location=location,
+                    scraped_at=datetime.utcnow().isoformat(timespec="seconds"),
+                    seller_id=None,           # not exposed on the search-result card
+                    seller_name=None,
+                    is_cpo=is_cpo,
+                )
+                save(conn, listing)
+                count += 1
+            except Exception as e:
+                print(f"    parse warn: {e}")
+
+        await page.wait_for_timeout(PAUSE_MS)
+    return count
+
+async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> int:
+    count = 0
+    for n in range(1, MAX_PAGES + 1):
+        url = autotrader_url(cfg, n)
+        print(f"  page {n} → {url}")
+        await page.goto(url, wait_until="domcontentloaded")
+        try:
+            await page.wait_for_selector('[data-testid="list-item"]', timeout=12000)
+        except Exception:
+            pass
+        await page.evaluate("window.scrollBy(0, 1500)")
+        await page.wait_for_timeout(1500)
+
+        cards = await page.query_selector_all('[data-testid="list-item"]')
+
+        if not cards and await detect_blockers(page):
+            print("  ⚠  Challenge page detected. Solve it in the browser — script will auto-continue.")
+            waited = 0
+            while await detect_blockers(page):
+                await page.wait_for_timeout(3000)
+                waited += 3
+                if waited % 30 == 0:
+                    print(f"    …still waiting ({waited}s)")
+                if waited >= 600:
+                    print("  ✗ Not cleared after 10min — skipping this search.")
+                    return count
+            await page.wait_for_timeout(2000)
+            cards = await page.query_selector_all('[data-testid="list-item"]')
+
+        if not cards:
+            print("  no results — stopping pagination")
+            break
+
+        print(f"    found {len(cards)} cards on page")
+
+        for card in cards:
+            try:
+                # Structured data lives on the article's data-* attributes
+                year  = _to_int(await card.get_attribute("data-model-year"))
+                price = _to_int(await card.get_attribute("data-price"))
+                km    = _to_int(await card.get_attribute("data-mileage"))
+
+                # Title link gives us href + a clean title via aria-label
+                title_a = await card.query_selector("a[aria-label]")
+                href = (await title_a.get_attribute("href")) if title_a else None
+                if not href:
+                    any_a = await card.query_selector("a[href]")
+                    href = (await any_a.get_attribute("href")) if any_a else None
+                if not href:
+                    continue
+                full = href if href.startswith("http") else f"https://www.autotrader.ca{href}"
+
+                h2 = await card.query_selector("h2")
+                title = ((await h2.inner_text()).strip().replace("\n", " ")
+                         if h2 else (await title_a.get_attribute("aria-label") or ""))
+
+                # Filter against full visible card text (catches AWD/Hybrid badges
+                # that aren't in the title)
+                card_text = (await card.inner_text()).replace("\n", " ")
+                if any(re.search(p, card_text, re.I) for p in cfg["drop_match"]):
+                    continue
+                if not all(re.search(p, card_text, re.I) for p in cfg["must_match"]):
+                    continue
+
+                loc_el = await card.query_selector('[data-testid="sellerinfo-address"]')
+                location = ((await loc_el.inner_text()).strip().replace("\n", " ")
+                            if loc_el else None)
+
+                seller_id = await card.get_attribute("data-customer-id")
+                name_el = await card.query_selector('[data-testid="sellerinfo-company-name"]')
+                seller_name = ((await name_el.inner_text()).strip()
+                               if name_el else None)
+
+                # CPO detection — title or full card text mentions "Certified"
+                is_cpo = 1 if re.search(r"\bcertified\b", card_text, re.I) else 0
+
+                listing = Listing(
+                    url=full,
+                    source="autotrader",
+                    search_name=cfg["name"],
+                    title=title,
+                    year=year,
+                    price=price,
+                    km=km,
+                    location=location,
+                    scraped_at=datetime.utcnow().isoformat(timespec="seconds"),
+                    seller_id=seller_id,
+                    seller_name=seller_name,
+                    is_cpo=is_cpo,
+                )
+                save(conn, listing)
+                count += 1
+            except Exception as e:
+                print(f"    parse warn: {e}")
+
+        await page.wait_for_timeout(PAUSE_MS)
+    return count
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEAL SCORING (price ~ year + km, linear)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def score_search(conn: sqlite3.Connection, search_name: str) -> None:
+    rows = conn.execute(
+        "SELECT url,year,price,km FROM listings "
+        "WHERE search_name=? AND price IS NOT NULL AND km IS NOT NULL AND year IS NOT NULL",
+        (search_name,),
+    ).fetchall()
+
+    if len(rows) < 4:
+        # too few data points — fall back to median
+        if not rows:
+            return
+        med = statistics.median(r[2] for r in rows)
+        for url, *_ , price, _ in [(r[0], r[1], r[2], r[3]) for r in rows]:
+            conn.execute("UPDATE listings SET deal_score=? WHERE url=?",
+                         ((price - med) / med, url))
+        conn.commit()
+        return
+
+    ys = [r[1] for r in rows]; ks = [r[3] for r in rows]; ps = [r[2] for r in rows]
+    my, mk, mp = statistics.mean(ys), statistics.mean(ks), statistics.mean(ps)
+
+    var_y  = sum((y-my)**2 for y in ys)
+    var_k  = sum((k-mk)**2 for k in ks)
+    cov_yk = sum((y-my)*(k-mk) for y,k in zip(ys,ks))
+    cov_yp = sum((y-my)*(p-mp) for y,p in zip(ys,ps))
+    cov_kp = sum((k-mk)*(p-mp) for k,p in zip(ks,ps))
+
+    det = var_y*var_k - cov_yk**2
+    if det == 0:
+        return
+    b = (var_k*cov_yp - cov_yk*cov_kp) / det      # year coefficient
+    c = (var_y*cov_kp - cov_yk*cov_yp) / det      # km coefficient
+    a = mp - b*my - c*mk
+
+    for url, year, price, km in rows:
+        expected = a + b*year + c*km
+        if expected > 1000:
+            score = (price - expected) / expected
+            conn.execute("UPDATE listings SET deal_score=? WHERE url=?", (score, url))
+    conn.commit()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEALER ENRICHMENT + GRADE
+# ─────────────────────────────────────────────────────────────────────────────
+
+PLACES_ENDPOINT = "https://places.googleapis.com/v1/places:searchText"
+
+def google_text_search(query: str, key: str, attempts: int = 3) -> dict | None:
+    """Returns the top matching place, or None if not found / not callable.
+    Retries 403s briefly — Google config changes (key restriction, API enablement)
+    can take ~30s to propagate, so a transient 403 may succeed on retry."""
+    last_err: str | None = None
+    for i in range(attempts):
+        req = urllib.request.Request(
+            PLACES_ENDPOINT, method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": key,
+                "X-Goog-FieldMask": ("places.displayName,places.rating,"
+                                     "places.userRatingCount,places.formattedAddress"),
+            },
+            data=json.dumps({"textQuery": query}).encode(),
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.load(r)
+                places = data.get("places") or []
+                return places[0] if places else None
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()[:300]
+            last_err = f"HTTP {e.code}: {body[:120]}"
+            if e.code in (403, 429, 500, 502, 503) and i < attempts - 1:
+                import time as _t; _t.sleep(2 + 3 * i)  # 2s, 5s
+                continue
+            break
+        except Exception as e:
+            last_err = str(e)
+            if i < attempts - 1:
+                import time as _t; _t.sleep(2)
+                continue
+            break
+    if last_err:
+        print(f"    Places API gave up after {attempts} attempts — {last_err[:160]}")
+    return None
+
+def _make_for_search(search_name: str) -> str | None:
+    """Heuristic: guess the make from the search name (first word)."""
+    m = re.search(r"\b(toyota|mazda|honda|nissan|hyundai|kia|ford|chevrolet|"
+                  r"subaru|bmw|audi|volkswagen|vw|mercedes|tesla|jeep|ram|"
+                  r"dodge|gmc|cadillac|lexus|infiniti|acura|porsche|volvo|"
+                  r"mitsubishi|lincoln|buick|chrysler|jaguar|land rover)\b",
+                  search_name, re.I)
+    return m.group(1).lower() if m else None
+
+def compute_grade(rating: float | None, reviews: int | None,
+                  brand_match: int, inventory: int, cpo_count: int) -> tuple[int, str]:
+    """Composite reliability score → letter grade. See README for rationale."""
+    score = 0
+
+    # Reviews quality
+    if rating is not None:
+        if   rating >= 4.5: score += 30
+        elif rating >= 4.0: score += 20
+        elif rating >= 3.5: score += 10
+        else:               score -= 10
+    # Reviews quantity
+    rc = reviews or 0
+    if   rc >= 500: score += 30
+    elif rc >= 200: score += 20
+    elif rc >= 50:  score += 10
+
+    # Brand-name dealer (offers CPO + factory warranty channel)
+    if brand_match: score += 20
+
+    # Has CPO listings — concrete warranty signal
+    if cpo_count >= 1: score += 10
+
+    # Inventory in our search (proxy for size / specialization)
+    if   inventory >= 5: score += 10
+    elif inventory >= 3: score += 5
+
+    if   score >= 80: return score, "A"
+    elif score >= 60: return score, "B"
+    elif score >= 40: return score, "C"
+    elif score >= 20: return score, "D"
+    else:             return score, "F"
+
+def enrich_dealers(conn: sqlite3.Connection) -> None:
+    key = os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        print("⚠  GOOGLE_API_KEY not set — skipping dealer enrichment "
+              "(grades will use heuristic only).")
+
+    # Inventory + cpo_count + a representative seller_name + search per dealer
+    rows = conn.execute("""
+        SELECT seller_id,
+               MAX(seller_name) AS seller_name,
+               MAX(search_name) AS search_name,
+               COUNT(*)         AS inventory,
+               SUM(is_cpo)      AS cpo_count
+        FROM listings
+        WHERE seller_id IS NOT NULL AND seller_name IS NOT NULL
+        GROUP BY seller_id
+    """).fetchall()
+
+    print(f"\n🏪 Enriching {len(rows)} unique dealer(s)…")
+    cutoff = datetime.utcnow() - timedelta(days=DEALER_CACHE_DAYS)
+
+    for seller_id, seller_name, search_name, inventory, cpo_count in rows:
+        cached = conn.execute(
+            "SELECT enriched_at FROM dealers WHERE customer_id=?", (seller_id,)
+        ).fetchone()
+        is_fresh = bool(
+            cached and cached[0]
+            and datetime.fromisoformat(cached[0]) > cutoff
+        )
+
+        rating = review_count = google_match = google_addr = None
+
+        if is_fresh:
+            row = conn.execute(
+                "SELECT google_match, google_addr, rating, review_count "
+                "FROM dealers WHERE customer_id=?", (seller_id,)
+            ).fetchone()
+            google_match, google_addr, rating, review_count = row
+            print(f"  · {seller_name} (cached) → ⭐{rating} / {review_count}")
+        elif key:
+            place = google_text_search(f"{seller_name} BC Canada", key)
+            if place:
+                google_match  = place.get("displayName", {}).get("text")
+                google_addr   = place.get("formattedAddress")
+                rating        = place.get("rating")
+                review_count  = place.get("userRatingCount")
+                print(f"  · {seller_name} → ⭐{rating or '—'} / {review_count or 0} reviews")
+            else:
+                print(f"  · {seller_name} → no Google match")
+
+        make = _make_for_search(search_name or "")
+        brand_match = int(bool(make and seller_name
+                               and re.search(rf"\b{re.escape(make)}\b", seller_name, re.I)))
+        gscore, grade = compute_grade(rating, review_count, brand_match,
+                                      inventory or 0, cpo_count or 0)
+
+        conn.execute("""
+            INSERT OR REPLACE INTO dealers
+            (customer_id, name, google_match, google_addr, rating, review_count,
+             brand_match, inventory, cpo_count, grade, grade_score, enriched_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (seller_id, seller_name, google_match, google_addr, rating, review_count,
+              brand_match, inventory, cpo_count, grade, gscore,
+              datetime.utcnow().isoformat(timespec="seconds")))
+    conn.commit()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WARRANTY STATUS (derived from year + km + is_cpo + factory schedules)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# (years, km) tuples. Sources: each manufacturer's Canadian basic/powertrain
+# new-vehicle warranties + Toyota Certified Used / Mazda Certified Pre-Owned
+# program terms. Verify program specifics with the dealer.
+WARRANTY_RULES: dict[str, dict[str, tuple[int, int]]] = {
+    "toyota": {
+        "basic":            (3,  60_000),
+        "powertrain":       (5, 100_000),
+        "hybrid":           (10, 240_000),     # Canada hybrid components
+        "cpo_powertrain":   (7, 160_000),      # Toyota CPO extension
+    },
+    "mazda": {
+        "basic":            (3,  80_000),
+        "powertrain":       (5, 100_000),
+        "cpo_powertrain":   (7, 140_000),
+    },
+    "honda":   {"basic": (3,  60_000), "powertrain": (5, 100_000)},
+    "nissan":  {"basic": (3,  60_000), "powertrain": (5, 100_000)},
+    "hyundai": {"basic": (5, 100_000), "powertrain": (5, 100_000)},
+    "kia":     {"basic": (5, 100_000), "powertrain": (5, 100_000)},
+}
+
+def warranty_for(year: int | None, km: int | None, search_name: str | None,
+                 is_cpo: bool, today_year: int | None = None) -> dict:
+    """Return {label, detail, cls} for a listing. Coverage is approximate —
+    we use model year as a proxy for in-service date, which is conservative
+    (real in-service date is usually a few months after model year start)."""
+    if today_year is None:
+        today_year = datetime.now().year
+
+    if year is None:
+        return {"label": "—", "detail": "Model year not parsed.", "cls": "unknown"}
+
+    make_match = re.search(
+        r"\b(toyota|mazda|honda|nissan|hyundai|kia)\b",
+        search_name or "", re.I,
+    )
+    make_key = make_match.group(1).lower() if make_match else None
+    rules = WARRANTY_RULES.get(make_key)
+    if not rules:
+        return {"label": "—",
+                "detail": "Warranty rules not configured for this make.",
+                "cls": "unknown"}
+
+    is_hybrid = bool(re.search(r"\bhybrid\b", search_name or "", re.I))
+    km = km or 0
+    age = today_year - year
+
+    valid = []   # human-readable lines for tooltip
+    flags = set()
+
+    if is_cpo and "cpo_powertrain" in rules:
+        c_yr, c_km = rules["cpo_powertrain"]
+        if age <= c_yr and km <= c_km:
+            valid.append(f"CPO powertrain — through year {year + c_yr} or {c_km:,} km")
+            flags.add("cpo")
+
+    if "basic" in rules:
+        b_yr, b_km = rules["basic"]
+        if age <= b_yr and km <= b_km:
+            valid.append(f"Factory bumper-to-bumper ({b_yr} yr / {b_km:,} km)")
+            flags.add("basic")
+
+    if "powertrain" in rules:
+        p_yr, p_km = rules["powertrain"]
+        if age <= p_yr and km <= p_km:
+            valid.append(f"Factory powertrain ({p_yr} yr / {p_km:,} km)")
+            flags.add("powertrain")
+
+    if is_hybrid and "hybrid" in rules:
+        h_yr, h_km = rules["hybrid"]
+        if age <= h_yr and km <= h_km:
+            valid.append(f"Hybrid components ({h_yr} yr / {h_km:,} km in Canada)")
+            flags.add("hybrid")
+
+    if "cpo" in flags:
+        label, cls = "CPO", "cpo"
+    elif "basic" in flags or "powertrain" in flags:
+        label, cls = "Factory", "factory"
+    elif "hybrid" in flags:
+        label, cls = "Hybrid only", "hybrid"
+    elif is_cpo:
+        # Has CPO badge but our age/km calc says expired — still notable
+        label, cls = "CPO (check)", "cpo"
+        valid.append("⚠ CPO listed but age/km exceeds typical program limits — confirm with dealer.")
+    else:
+        label, cls = "Expired", "expired"
+        valid.append("All factory new-vehicle warranties out by age/km. Ask about extended warranty.")
+
+    return {"label": label, "detail": " · ".join(valid), "cls": cls}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPORT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def write_report(conn: sqlite3.Connection, path: str) -> None:
+    rows = conn.execute("""
+        SELECT search_name, year, title, price, km, location, deal_score, url
+        FROM listings
+        WHERE deal_score IS NOT NULL
+        ORDER BY search_name, deal_score ASC
+    """).fetchall()
+
+    grouped: dict[str, list] = {}
+    for r in rows:
+        grouped.setdefault(r[0], []).append(r)
+
+    out = ["# Used Car Deal Report",
+           f"_Generated {datetime.now().isoformat(timespec='seconds')}_",
+           "",
+           "Deal score = listing price vs predicted price (year + km regression). "
+           "Negative = below market.",
+           ""]
+
+    for search, items in grouped.items():
+        out += [f"## {search}",
+                "",
+                "| Deal | Year | Title | Price | KM | Location | Link |",
+                "|---|---|---|---|---|---|---|"]
+        for r in items[:20]:
+            search_name, year, title, price, km, loc, score, url = r
+            pct  = f"{score*100:+.1f}%"
+            flag = "🔥" if score < -0.10 else "✅" if score < -0.03 else "·" if score < 0.05 else "⚠"
+            out.append(
+                f"| {flag} {pct} | {year or '?'} | {title[:55]} "
+                f"| ${price:,} | {km:,} | {loc or ''} | [view]({url}) |"
+            )
+        out.append("")
+
+    Path(path).write_text("\n".join(out))
+    print(f"\n📄 Report written: {path}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HTML REPORT (deployable to Firebase Hosting)
+# ─────────────────────────────────────────────────────────────────────────────
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BC Used Car Deal Finder</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    min-height: 100vh; padding: 20px; color: #1a1a1a;
+  }
+  .container {
+    max-width: 1400px; margin: 0 auto; background: #fff;
+    border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden;
+  }
+  header {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: #fff; padding: 28px 32px;
+  }
+  header h1 { font-size: 2em; margin-bottom: 6px; }
+  header p  { opacity: 0.85; font-size: 0.95em; }
+  .meta { padding: 16px 32px; background: #f5f7fb; color: #555;
+          font-size: 0.85em; border-bottom: 1px solid #e5e7eb;
+          display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .tabs {
+    display: flex; gap: 4px; padding: 16px 32px 0; background: #fff;
+    border-bottom: 2px solid #e5e7eb; flex-wrap: wrap;
+  }
+  .tab {
+    background: #f1f3f7; color: #444; border: none; padding: 10px 18px;
+    border-radius: 8px 8px 0 0; cursor: pointer; font-size: 0.95em;
+    font-weight: 500; transition: all 0.15s;
+  }
+  .tab:hover { background: #e5e9f2; }
+  .tab.active { background: #2a5298; color: #fff; }
+  .panel { padding: 24px 32px; display: none; }
+  .panel.active { display: block; }
+  .panel h2 { font-size: 1.3em; margin-bottom: 12px; }
+  .panel-meta { color: #666; font-size: 0.9em; margin-bottom: 16px; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 0.9em;
+    background: #fff; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eef0f3; }
+  th {
+    background: #f8fafc; font-weight: 600; color: #374151;
+    cursor: pointer; user-select: none; position: sticky; top: 0;
+  }
+  th:hover { background: #eef2f7; }
+  tr:hover td { background: #f9fafc; }
+  .deal { font-weight: 600; white-space: nowrap; }
+  .deal.fire    { color: #c2410c; }
+  .deal.good    { color: #15803d; }
+  .deal.fair    { color: #525252; }
+  .deal.bad     { color: #b91c1c; }
+  .grade {
+    display: inline-block; min-width: 22px; text-align: center;
+    padding: 2px 6px; border-radius: 4px; font-weight: 700;
+    font-size: 0.85em; color: #fff;
+  }
+  .grade.A { background: #15803d; }
+  .grade.B { background: #65a30d; }
+  .grade.C { background: #ca8a04; }
+  .grade.D { background: #ea580c; }
+  .grade.F { background: #b91c1c; }
+  .grade.U { background: #6b7280; }     /* unknown */
+  .dealer-cell { display: flex; flex-direction: column; gap: 2px; min-width: 130px; }
+  .dealer-cell .name { font-size: 0.85em; color: #1f2937; line-height: 1.2;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+  .dealer-cell .meta { font-size: 0.75em; color: #6b7280; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 0.7em; font-weight: 600; margin-left: 4px;
+  }
+  .badge.cpo { background: #dbeafe; color: #1e40af; }
+  .badge.brand { background: #fef3c7; color: #92400e; }
+  .badge.src-autotrader { background: #ecfdf5; color: #065f46; }
+  .badge.src-kijiji     { background: #fef3c7; color: #78350f; }
+  .warr {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 0.78em; font-weight: 600; white-space: nowrap;
+    cursor: help; position: relative;
+  }
+  .warr.cpo      { background: #fef3c7; color: #78350f; border: 1px solid #fde68a; }
+  .warr.factory  { background: #dcfce7; color: #14532d; }
+  .warr.hybrid   { background: #cffafe; color: #155e75; }
+  .warr.expired  { background: #fee2e2; color: #7f1d1d; }
+  .warr.unknown  { background: #f1f5f9; color: #475569; }
+  .warr .tip {
+    display: none; position: absolute; left: 0; top: 100%;
+    margin-top: 6px; background: #1f2937; color: #e5e7eb;
+    padding: 8px 12px; border-radius: 6px; font-weight: 400;
+    font-size: 0.92em; line-height: 1.4; white-space: normal;
+    width: 280px; z-index: 1000; box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+  }
+  .warr:hover .tip { display: block; }
+  /* Match-score matrix */
+  .matrix-toggle {
+    background: none; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 12px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 600;
+  }
+  .matrix-toggle:hover { background: #eef2f7; }
+  .matrix-toggle.on { background: #2a5298; color: #fff; border-color: #2a5298; }
+  .matrix-panel {
+    background: #f5f7fb; padding: 18px 32px; display: none;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .matrix-panel.open { display: block; }
+  .matrix-panel h3 {
+    font-size: 0.95em; color: #1f2937; margin-bottom: 4px;
+  }
+  .matrix-panel p.hint {
+    font-size: 0.82em; color: #6b7280; margin-bottom: 14px;
+  }
+  .matrix-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 10px 24px; margin-bottom: 12px;
+  }
+  .matrix-row {
+    display: flex; align-items: center; gap: 12px; font-size: 0.9em;
+  }
+  .matrix-row .lbl { flex: 1; color: #1f2937; }
+  .matrix-row input[type=range] { width: 120px; accent-color: #2a5298; }
+  .matrix-row .val {
+    min-width: 38px; text-align: center; font-weight: 600;
+    font-size: 0.85em; color: #2a5298;
+    background: #fff; padding: 2px 6px; border-radius: 4px;
+    border: 1px solid #e5e7eb;
+  }
+  .matrix-actions { display: flex; gap: 8px; }
+  .matrix-actions button {
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 500; border: 1px solid transparent;
+  }
+  .matrix-actions .apply { background: #2a5298; color: #fff; }
+  .matrix-actions .apply:hover { background: #1e3c72; }
+  .matrix-actions .preset { background: #fff; color: #2a5298; border-color: #c8d2e0; }
+  .matrix-actions .clear  { background: #fff; color: #b91c1c; border-color: #fecaca; }
+  .match-bar {
+    display: inline-block; min-width: 56px; padding: 3px 9px;
+    border-radius: 4px; font-weight: 600; font-size: 0.85em;
+    color: #fff; text-align: center;
+  }
+  .match-bar.high   { background: #15803d; }
+  .match-bar.good   { background: #65a30d; }
+  .match-bar.med    { background: #ca8a04; }
+  .match-bar.low    { background: #ea580c; }
+  .match-bar.poor   { background: #b91c1c; }
+  th.col-match, td.col-match { display: none; }
+  .panel.match-on th.col-match,
+  .panel.match-on td.col-match { display: table-cell; }
+  .total-cell {
+    white-space: nowrap; position: relative; cursor: help;
+    border-bottom: 1px dotted #999; display: inline-block;
+  }
+  .total-cell .breakdown {
+    display: none; position: absolute; left: 0; top: 100%;
+    background: #1f2937; color: #fff; padding: 8px 0; border-radius: 6px;
+    font-size: 0.78em; white-space: nowrap; z-index: 1000;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25); margin-top: 6px; min-width: 220px;
+  }
+  .total-cell:hover .breakdown { display: block; }
+  .breakdown table { background: transparent; box-shadow: none; }
+  .breakdown td {
+    padding: 3px 14px; color: #e5e7eb; border: none;
+    font-weight: 400; background: transparent;
+  }
+  .breakdown td.lbl { color: #9ca3af; padding-right: 8px; }
+  .breakdown td.amt { text-align: right; font-variant-numeric: tabular-nums; }
+  .breakdown tr.total td { color: #fff; font-weight: 600; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.2); }
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    background: #f5f7fb; padding: 12px 14px; border-radius: 8px; margin-bottom: 12px;
+    font-size: 0.88em;
+  }
+  .filter-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .filter-bar select, .filter-bar input[type="checkbox"] { cursor: pointer; }
+  .filter-bar select {
+    padding: 4px 8px; border: 1px solid #c8d2e0; border-radius: 4px;
+    background: #fff; font-size: 0.95em;
+  }
+  .filter-bar .count { margin-left: auto; color: #555; font-weight: 500; }
+  .filter-bar .reset {
+    background: #fff; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em;
+  }
+  .filter-bar .reset:hover { background: #eef2f7; }
+  th.sortable { cursor: pointer; }
+  th.sortable:after { content: ' ↕'; opacity: 0.3; font-size: 0.85em; }
+  th.sortable.asc:after  { content: ' ↑'; opacity: 1; color: #2a5298; }
+  th.sortable.desc:after { content: ' ↓'; opacity: 1; color: #2a5298; }
+  .cpo-tooltip { border-bottom: 1px dotted #888; cursor: help; }
+  .price { font-weight: 600; }
+  td a { color: #2a5298; text-decoration: none; font-weight: 500; }
+  td a:hover { text-decoration: underline; }
+  .empty { padding: 40px; text-align: center; color: #888; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.85em; color: #555; margin-top: 16px; }
+  .legend span { padding: 4px 10px; border-radius: 12px; background: #f1f3f7; }
+  @media (max-width: 700px) {
+    body { padding: 8px; }
+    header, .meta, .tabs, .panel { padding-left: 16px; padding-right: 16px; }
+    th, td { padding: 8px 6px; font-size: 0.82em; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🚗 BC Used Car Deal Finder</h1>
+    <p>Listings ranked against a year + km regression. Dealer grade combines Google reviews, brand affiliation, CPO badges, and inventory.</p>
+    <p style="margin-top:8px;font-size:0.9em;"><a href="checklist.html" style="color:#9ec5ff;text-decoration:underline;">📋 Pre-purchase checklist →</a></p>
+  </header>
+  <div class="meta">
+    <span>Generated: <strong id="generated">—</strong></span>
+    <span>Total listings: <strong id="total">—</strong></span>
+    <span>Dealers: <strong id="dealer-count">—</strong></span>
+    <button class="matrix-toggle" id="matrix-toggle">🎯 Customize match score: OFF</button>
+  </div>
+  <div class="matrix-panel" id="matrix-panel">
+    <h3>What matters most to you?</h3>
+    <p class="hint">Set how important each factor is (0 = ignore, 5 = critical). The Match % column ranks listings by your priorities.</p>
+    <div class="matrix-grid" id="matrix-grid"></div>
+    <div class="matrix-actions">
+      <button class="apply"  id="matrix-apply">Apply</button>
+      <button class="preset" id="matrix-preset">Use balanced preset</button>
+      <button class="clear"  id="matrix-clear">Turn off</button>
+    </div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="panels"></div>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(function () {
+  const payload = JSON.parse(document.getElementById('data').textContent);
+  document.getElementById('generated').textContent = payload.generated;
+  document.getElementById('total').textContent = payload.total;
+  document.getElementById('dealer-count').textContent = (payload.dealers || []).length;
+
+  const tabsEl = document.getElementById('tabs');
+  const panelsEl = document.getElementById('panels');
+
+  const esc = s => (s == null ? '' : String(s).replace(/[<>&"]/g,
+    c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])));
+
+  const flagFor = (s) => {
+    if (s < -0.10) return ['🔥 Hot', 'fire'];
+    if (s < -0.03) return ['✅ Good', 'good'];
+    if (s <  0.05) return ['· Fair', 'fair'];
+    return ['⚠ Above', 'bad'];
+  };
+
+  const fmtPct = (s) => (s >= 0 ? '+' : '') + (s * 100).toFixed(1) + '%';
+  const fmtMoney = (n) => n == null ? '—' : '$' + n.toLocaleString();
+  const fmtKm = (n) => n == null ? '—' : n.toLocaleString() + ' km';
+
+  function gradeBadge(g, score) {
+    const cls = (g && /^[A-F]$/.test(g)) ? g : 'U';
+    const tip = score != null ? ` title="score ${score}/110"` : '';
+    return `<span class="grade ${cls}"${tip}>${esc(g || '?')}</span>`;
+  }
+
+  function dealerCell(it) {
+    const stars = it.rating != null ? `⭐${it.rating} (${(it.review_count || 0).toLocaleString()})` : 'no Google data';
+    const badges = [];
+    if (it.brand_match) badges.push('<span class="badge brand" title="Brand-name dealer">brand</span>');
+    if (it.is_cpo)      badges.push('<span class="badge cpo" title="Certified Pre-Owned listing">CPO</span>');
+    return `
+      <div class="dealer-cell">
+        <div>${gradeBadge(it.grade, it.grade_score)}
+          <span class="name" title="${esc(it.seller_name || '')}">${esc(it.seller_name || '—')}</span>
+          ${badges.join('')}
+        </div>
+        <div class="meta">${stars}</div>
+      </div>`;
+  }
+
+  const GRADE_RANK = { A:5, B:4, C:3, D:2, F:1 };
+
+  // ── Match-score matrix ────────────────────────────────────────────────
+  // Each dimension scores a listing 0-100 on its own axis. The user's slider
+  // weight (0-5) determines that axis's contribution to the final match %.
+  const MATRIX_DIMS = [
+    { key: 'deal',     label: 'Below-market price (deal score)',
+      score: it => it.deal_score == null ? null : Math.max(0, Math.min(100, 50 - it.deal_score * 500)) },
+    { key: 'mileage',  label: 'Low mileage',
+      score: it => it.km == null ? null : Math.max(0, Math.min(100, 100 - (it.km / 1500))) },
+    { key: 'year',     label: 'Newer model year',
+      score: it => it.year == null ? null : Math.max(0, Math.min(100, (it.year - 2018) * 20)) },
+    { key: 'dealer',   label: 'Dealer trustworthiness (Google + brand)',
+      score: it => (GRADE_RANK[it.grade] || 0) * 20 },
+    { key: 'warranty', label: 'Remaining warranty coverage',
+      score: it => (WARR_RANK[it.warranty_cls] || 0) * 25 },
+    { key: 'brand',    label: 'Brand-name dealer (Toyota/Mazda dealer for that make)',
+      score: it => it.brand_match ? 100 : 0 },
+    { key: 'cpo',      label: 'CPO (Certified Pre-Owned) badge',
+      score: it => it.is_cpo ? 100 : 0 },
+  ];
+  const PRESET_BALANCED = { deal: 3, mileage: 2, year: 2, dealer: 3, warranty: 3, brand: 2, cpo: 2 };
+  const MATRIX_KEY = 'car-finder-matrix-v1';
+
+  let matrixState = (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(MATRIX_KEY) || '{}');
+      if (saved && saved.weights) return saved;
+    } catch (e) {}
+    const zero = {};
+    MATRIX_DIMS.forEach(d => zero[d.key] = 0);
+    return { active: false, weights: zero };
+  })();
+
+  const matrixListeners = [];
+  function notifyMatrix() {
+    matrixListeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } });
+    try { localStorage.setItem(MATRIX_KEY, JSON.stringify(matrixState)); } catch (e) {}
+  }
+
+  function matchScore(it) {
+    if (!matrixState.active) return null;
+    let total = 0, sum = 0;
+    for (const d of MATRIX_DIMS) {
+      const w = matrixState.weights[d.key] || 0;
+      if (w === 0) continue;
+      const s = d.score(it);
+      if (s == null || isNaN(s)) continue;
+      total += w;
+      sum += w * Math.max(0, Math.min(100, s));
+    }
+    if (total === 0) return null;
+    return Math.round(sum / total);
+  }
+
+  function matchBar(it) {
+    const m = matchScore(it);
+    if (m == null) return '<span class="match-bar low" title="No score">—</span>';
+    let cls = 'poor';
+    if (m >= 80) cls = 'high';
+    else if (m >= 65) cls = 'good';
+    else if (m >= 50) cls = 'med';
+    else if (m >= 35) cls = 'low';
+    return `<span class="match-bar ${cls}">${m}%</span>`;
+  }
+
+  function setupMatrixUI() {
+    const grid = document.getElementById('matrix-grid');
+    const toggle = document.getElementById('matrix-toggle');
+    const panel = document.getElementById('matrix-panel');
+
+    // build sliders
+    grid.innerHTML = MATRIX_DIMS.map(d => `
+      <div class="matrix-row">
+        <span class="lbl">${esc(d.label)}</span>
+        <input type="range" min="0" max="5" step="1" data-dim="${d.key}"
+               value="${matrixState.weights[d.key] || 0}">
+        <span class="val" data-val="${d.key}">${matrixState.weights[d.key] || 0}</span>
+      </div>`).join('');
+
+    function updateToggleLabel() {
+      toggle.classList.toggle('on', matrixState.active);
+      toggle.textContent = matrixState.active
+        ? '🎯 Customize match score: ON'
+        : '🎯 Customize match score: OFF';
+    }
+    function syncSlidersToState() {
+      MATRIX_DIMS.forEach(d => {
+        const v = matrixState.weights[d.key] || 0;
+        const sl = grid.querySelector(`input[data-dim="${d.key}"]`);
+        const val = grid.querySelector(`.val[data-val="${d.key}"]`);
+        if (sl) sl.value = v;
+        if (val) val.textContent = v;
+      });
+    }
+    function readSliders() {
+      MATRIX_DIMS.forEach(d => {
+        const sl = grid.querySelector(`input[data-dim="${d.key}"]`);
+        const val = grid.querySelector(`.val[data-val="${d.key}"]`);
+        const v = parseInt(sl.value, 10) || 0;
+        matrixState.weights[d.key] = v;
+        if (val) val.textContent = v;
+      });
+    }
+
+    grid.addEventListener('input', e => {
+      if (e.target.matches('input[type=range]')) {
+        readSliders();
+        if (matrixState.active) notifyMatrix();
+      }
+    });
+
+    toggle.addEventListener('click', () => panel.classList.toggle('open'));
+
+    document.getElementById('matrix-apply').addEventListener('click', () => {
+      readSliders();
+      const anyWeight = MATRIX_DIMS.some(d => (matrixState.weights[d.key] || 0) > 0);
+      matrixState.active = anyWeight;
+      updateToggleLabel();
+      notifyMatrix();
+    });
+    document.getElementById('matrix-preset').addEventListener('click', () => {
+      matrixState.weights = { ...PRESET_BALANCED };
+      matrixState.active = true;
+      syncSlidersToState();
+      updateToggleLabel();
+      notifyMatrix();
+    });
+    document.getElementById('matrix-clear').addEventListener('click', () => {
+      MATRIX_DIMS.forEach(d => matrixState.weights[d.key] = 0);
+      matrixState.active = false;
+      syncSlidersToState();
+      updateToggleLabel();
+      notifyMatrix();
+    });
+
+    updateToggleLabel();
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
+  // BC: 12% combined tax (5% GST + 7% PST dealer, OR 12% PST private)
+  // Doc fee dealer ~$499, ICBC transfer for private ~$80.
+  const TAX_RATE = 0.12;
+  const DEALER_FEE  = 499;
+  const PRIVATE_FEE = 80;
+
+  function feeFor(src) {
+    return src === 'kijiji' ? PRIVATE_FEE : DEALER_FEE;
+  }
+  function totalPrice(it) {
+    if (it.price == null) return null;
+    return Math.round(it.price * (1 + TAX_RATE) + feeFor(it.source));
+  }
+  function totalBreakdown(it) {
+    if (it.price == null) return '';
+    const tax = Math.round(it.price * TAX_RATE);
+    const fee = feeFor(it.source);
+    const total = it.price + tax + fee;
+    const feeLabel = it.source === 'kijiji' ? 'ICBC transfer (private)' : 'Doc fee + admin (dealer)';
+    return `<div class="breakdown"><table><tbody>
+      <tr><td class="lbl">Sticker price</td><td class="amt">${fmtMoney(it.price)}</td></tr>
+      <tr><td class="lbl">Tax (12%)</td>      <td class="amt">+${fmtMoney(tax)}</td></tr>
+      <tr><td class="lbl">${feeLabel}</td>    <td class="amt">+${fmtMoney(fee)}</td></tr>
+      <tr class="total"><td class="lbl">Out the door</td><td class="amt">${fmtMoney(total)}</td></tr>
+    </tbody></table></div>`;
+  }
+
+  function sourceBadge(src) {
+    const labels = { autotrader: 'AutoTrader', kijiji: 'Kijiji' };
+    const label = labels[src] || src || '?';
+    return `<span class="badge src-${src || 'unknown'}">${esc(label)}</span>`;
+  }
+
+  function warrantyCell(it) {
+    const cls = it.warranty_cls || 'unknown';
+    const label = it.warranty_label || '—';
+    const detail = it.warranty_detail || '';
+    return `<span class="warr ${cls}">${esc(label)}<span class="tip">${esc(detail)}</span></span>`;
+  }
+
+  function rowHtml(it) {
+    const [label, cls] = flagFor(it.deal_score);
+    const total = totalPrice(it);
+    const totalCell = total == null
+      ? '<span class="total-cell">—</span>'
+      : `<span class="total-cell"><strong>${fmtMoney(total)}</strong>${totalBreakdown(it)}</span>`;
+    return `<tr>
+        <td class="col-match">${matchBar(it)}</td>
+        <td class="deal ${cls}">${label} ${fmtPct(it.deal_score)}</td>
+        <td>${it.year ?? '?'}</td>
+        <td>${esc(it.title)} ${sourceBadge(it.source)}</td>
+        <td class="price">${totalCell}</td>
+        <td>${fmtKm(it.km)}</td>
+        <td>${dealerCell(it)}</td>
+        <td>${warrantyCell(it)}</td>
+        <td class="hide-sm">${esc(it.location || '')}</td>
+        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a></td>
+      </tr>`;
+  }
+
+  // Higher = more reassuring warranty status, used for sorting/filtering
+  const WARR_RANK = { cpo: 4, factory: 3, hybrid: 2, expired: 1, unknown: 0 };
+
+  function applyFilterSort(items, state) {
+    const minRank = GRADE_RANK[state.minGrade] || 0;
+    let out = items.filter(it => {
+      if (state.source !== 'ALL' && it.source !== state.source) return false;
+      if (state.brandOnly && !it.brand_match) return false;
+      if (state.cpoOnly   && !it.is_cpo)      return false;
+      if (state.minGrade !== 'ALL') {
+        const r = GRADE_RANK[it.grade] || 0;
+        if (r < minRank) return false;
+      }
+      if (state.warranty !== 'ALL') {
+        if (state.warranty === 'not_expired') {
+          if (it.warranty_cls === 'expired' || it.warranty_cls === 'unknown') return false;
+        } else if (it.warranty_cls !== state.warranty) {
+          return false;
+        }
+      }
+      return true;
+    });
+    const k = state.sortKey;
+    const valueOf = (it) => {
+      if (k === 'total_price')  return totalPrice(it);
+      if (k === 'grade')        return GRADE_RANK[it.grade] || 0;
+      if (k === 'warranty_cls') return WARR_RANK[it.warranty_cls] || 0;
+      if (k === 'match')        return matchScore(it);
+      return it[k];
+    };
+    out.sort((a, b) => {
+      const av = valueOf(a), bv = valueOf(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'string') return av.localeCompare(bv) * state.sortDir;
+      return (av - bv) * state.sortDir;
+    });
+    return out;
+  }
+
+  function buildSearchPanel(search, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel' + (idx === 0 ? ' active' : '');
+    if (!search.items.length) {
+      panel.innerHTML = `<h2>${esc(search.name)}</h2><div class="empty">No scored listings yet.</div>`;
+      return panel;
+    }
+
+    const state = {
+      sortKey: 'deal_score', sortDir: 1,    // ascending = best deal first
+      source: 'ALL', brandOnly: false, cpoOnly: false, minGrade: 'ALL',
+      warranty: 'ALL',
+    };
+
+    panel.innerHTML = `
+      <h2>${esc(search.name)}</h2>
+      <div class="filter-bar">
+        <label>Source
+          <select data-fld="source">
+            <option value="ALL">All</option>
+            <option value="autotrader">AutoTrader</option>
+            <option value="kijiji">Kijiji</option>
+          </select>
+        </label>
+        <label>Min dealer grade
+          <select data-fld="minGrade">
+            <option value="ALL">All</option>
+            <option value="A">A only</option>
+            <option value="B">A or B</option>
+            <option value="C">A–C</option>
+            <option value="D">A–D</option>
+          </select>
+        </label>
+        <label>Warranty
+          <select data-fld="warranty">
+            <option value="ALL">All</option>
+            <option value="cpo">CPO only</option>
+            <option value="factory">Factory remaining</option>
+            <option value="hybrid">Hybrid coverage only</option>
+            <option value="not_expired">Any coverage left</option>
+          </select>
+        </label>
+        <label><input type="checkbox" data-fld="brandOnly"> Brand-name dealer only</label>
+        <label><input type="checkbox" data-fld="cpoOnly">
+          <span class="cpo-tooltip" title="Certified Pre-Owned: factory-backed warranty extension via the brand dealer (e.g. Toyota Certified Used, Mazda CPO).">CPO only</span>
+        </label>
+        <button class="reset" type="button">Reset</button>
+        <span class="count"></span>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="col-match sortable" data-key="match"
+              title="Personalized match based on your priorities — set in the Customize panel above.">Match</th>
+          <th class="sortable asc" data-key="deal_score">Deal</th>
+          <th class="sortable" data-key="year">Year</th>
+          <th class="sortable" data-key="title">Title</th>
+          <th class="sortable" data-key="total_price"
+              title="Out-the-door: sticker + 12% BC tax + doc/ICBC fee. Hover any cell for breakdown.">Total ⓘ</th>
+          <th class="sortable" data-key="km">KM</th>
+          <th class="sortable" data-key="grade">Dealer</th>
+          <th class="sortable" data-key="warranty_cls"
+              title="Warranty status derived from year, km, CPO badge, and the manufacturer's factory warranty schedule. Hover any cell for the specific coverage.">Warranty ⓘ</th>
+          <th class="hide-sm sortable" data-key="location">Location</th>
+          <th>Link</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="legend">
+        <span>🔥 &lt; -10% (hot)</span>
+        <span>✅ -10% to -3% (good)</span>
+        <span>· -3% to +5% (fair)</span>
+        <span>⚠ &gt; +5% (above market)</span>
+        <span class="grade A">A</span>
+        <span class="grade B">B</span>
+        <span class="grade C">C</span>
+        <span class="grade D">D</span>
+        <span class="grade F">F</span>
+      </div>`;
+
+    const tbody = panel.querySelector('tbody');
+    const countEl = panel.querySelector('.count');
+    const headers = panel.querySelectorAll('th.sortable');
+
+    function rerender() {
+      panel.classList.toggle('match-on', !!matrixState.active);
+      // If matrix just turned on/off, prefer sorting by match desc
+      if (matrixState.active && state.sortKey !== 'match') {
+        // don't override if user already chose another key intentionally
+      }
+      const out = applyFilterSort(search.items, state);
+      tbody.innerHTML = out.map(rowHtml).join('');
+      countEl.textContent = `${out.length} of ${search.items.length} listings`;
+      headers.forEach(h => {
+        h.classList.remove('asc', 'desc');
+        if (h.dataset.key === state.sortKey) {
+          h.classList.add(state.sortDir === 1 ? 'asc' : 'desc');
+        }
+      });
+    }
+    matrixListeners.push(rerender);
+
+    panel.querySelectorAll('[data-fld]').forEach(el => {
+      el.addEventListener('change', () => {
+        const f = el.dataset.fld;
+        state[f] = el.type === 'checkbox' ? el.checked : el.value;
+        rerender();
+      });
+    });
+    panel.querySelector('.reset').addEventListener('click', () => {
+      state.brandOnly = false; state.cpoOnly = false;
+      state.minGrade = 'ALL'; state.source = 'ALL'; state.warranty = 'ALL';
+      state.sortKey = 'deal_score'; state.sortDir = 1;
+      panel.querySelectorAll('input[type=checkbox][data-fld]').forEach(c => c.checked = false);
+      panel.querySelectorAll('select[data-fld]').forEach(s => s.value = 'ALL');
+      rerender();
+    });
+    headers.forEach(h => {
+      h.addEventListener('click', () => {
+        const k = h.dataset.key;
+        if (state.sortKey === k) state.sortDir = -state.sortDir;
+        else {
+          state.sortKey = k;
+          // ascending default for "smaller is better" columns
+          // descending default for "higher is better" (match, grade, year, etc.)
+          state.sortDir = (k === 'deal_score' || k === 'total_price' || k === 'km') ? 1 : -1;
+        }
+        rerender();
+      });
+    });
+
+    rerender();
+    return panel;
+  }
+
+  function buildDealersPanel(dealers, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel';
+    if (!dealers || !dealers.length) {
+      panel.innerHTML = `<h2>Dealers</h2><div class="empty">No dealers yet.</div>`;
+      return panel;
+    }
+    const state = {
+      sortKey: 'grade_score', sortDir: -1,
+      brandOnly: false, cpoOnly: false, minGrade: 'ALL',
+    };
+    function dealerRow(d) {
+      return `<tr>
+        <td>${gradeBadge(d.grade, d.grade_score)}</td>
+        <td>${esc(d.name || '—')}${d.brand_match ? ' <span class="badge brand">brand</span>' : ''}</td>
+        <td>${d.rating != null ? '⭐' + d.rating : '—'}</td>
+        <td>${(d.review_count || 0).toLocaleString()}</td>
+        <td>${d.inventory || 0}</td>
+        <td>${d.cpo_count || 0}</td>
+        <td class="hide-sm">${esc(d.google_match || '')}</td>
+      </tr>`;
+    }
+    function rerender() {
+      const minRank = GRADE_RANK[state.minGrade] || 0;
+      let out = dealers.filter(d => {
+        if (state.brandOnly && !d.brand_match)    return false;
+        if (state.cpoOnly   && !(d.cpo_count > 0)) return false;
+        if (state.minGrade !== 'ALL' && (GRADE_RANK[d.grade] || 0) < minRank) return false;
+        return true;
+      });
+      const k = state.sortKey;
+      out.sort((a, b) => {
+        let av = a[k], bv = b[k];
+        if (k === 'grade') { av = GRADE_RANK[av] || 0; bv = GRADE_RANK[bv] || 0; }
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        if (typeof av === 'string') return av.localeCompare(bv) * state.sortDir;
+        return (av - bv) * state.sortDir;
+      });
+      tbody.innerHTML = out.map(dealerRow).join('');
+      countEl.textContent = `${out.length} of ${dealers.length} dealers`;
+      headers.forEach(h => {
+        h.classList.remove('asc', 'desc');
+        if (h.dataset.key === state.sortKey) {
+          h.classList.add(state.sortDir === 1 ? 'asc' : 'desc');
+        }
+      });
+    }
+    panel.innerHTML = `
+      <h2>Dealer reliability ranking</h2>
+      <div class="panel-meta">Grade = rating + review count + brand-match + CPO + inventory size. Hover the badge for raw score.</div>
+      <div class="filter-bar">
+        <label>Min grade
+          <select data-fld="minGrade">
+            <option value="ALL">All</option>
+            <option value="A">A only</option>
+            <option value="B">A or B</option>
+            <option value="C">A–C</option>
+            <option value="D">A–D</option>
+          </select>
+        </label>
+        <label><input type="checkbox" data-fld="brandOnly"> Brand-name only</label>
+        <label><input type="checkbox" data-fld="cpoOnly"> Has CPO listings</label>
+        <button class="reset" type="button">Reset</button>
+        <span class="count"></span>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="sortable desc" data-key="grade_score">Grade</th>
+          <th class="sortable" data-key="name">Dealer</th>
+          <th class="sortable" data-key="rating">Rating</th>
+          <th class="sortable" data-key="review_count">Reviews</th>
+          <th class="sortable" data-key="inventory">In our results</th>
+          <th class="sortable" data-key="cpo_count">CPO listings</th>
+          <th class="hide-sm">Google match</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>`;
+    const tbody   = panel.querySelector('tbody');
+    const countEl = panel.querySelector('.count');
+    const headers = panel.querySelectorAll('th.sortable');
+
+    panel.querySelectorAll('[data-fld]').forEach(el => {
+      el.addEventListener('change', () => {
+        const f = el.dataset.fld;
+        state[f] = el.type === 'checkbox' ? el.checked : el.value;
+        rerender();
+      });
+    });
+    panel.querySelector('.reset').addEventListener('click', () => {
+      state.brandOnly = false; state.cpoOnly = false; state.minGrade = 'ALL';
+      state.sortKey = 'grade_score'; state.sortDir = -1;
+      panel.querySelectorAll('input[type=checkbox][data-fld]').forEach(c => c.checked = false);
+      panel.querySelector('select[data-fld=minGrade]').value = 'ALL';
+      rerender();
+    });
+    headers.forEach(h => {
+      h.addEventListener('click', () => {
+        const k = h.dataset.key;
+        if (state.sortKey === k) state.sortDir = -state.sortDir;
+        else { state.sortKey = k; state.sortDir = -1; }
+        rerender();
+      });
+    });
+    rerender();
+    return panel;
+  }
+
+  function makeTab(label, idx, isActive) {
+    const t = document.createElement('button');
+    t.className = 'tab' + (isActive ? ' active' : '');
+    t.textContent = label;
+    t.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('panel-' + idx).classList.add('active');
+    };
+    return t;
+  }
+
+  payload.searches.forEach((search, idx) => {
+    tabsEl.appendChild(makeTab(`${search.name} (${search.items.length})`, idx, idx === 0));
+    panelsEl.appendChild(buildSearchPanel(search, idx));
+  });
+
+  const dealersIdx = payload.searches.length;
+  tabsEl.appendChild(makeTab(`🏪 Dealers (${(payload.dealers || []).length})`, dealersIdx, false));
+  panelsEl.appendChild(buildDealersPanel(payload.dealers || [], dealersIdx));
+
+  setupMatrixUI();
+})();
+</script>
+</body>
+</html>"""
+
+def write_html_report(conn: sqlite3.Connection, out_dir: str) -> None:
+    rows = conn.execute("""
+        SELECT l.search_name, l.year, l.title, l.price, l.km, l.location,
+               l.deal_score, l.url, l.is_cpo, l.source,
+               l.seller_id, l.seller_name,
+               d.rating, d.review_count, d.brand_match, d.grade, d.grade_score,
+               d.google_match
+        FROM listings l
+        LEFT JOIN dealers d ON d.customer_id = l.seller_id
+        WHERE l.deal_score IS NOT NULL
+        ORDER BY l.search_name, l.deal_score ASC
+    """).fetchall()
+
+    grouped: dict[str, list[dict]] = {}
+    for (search_name, year, title, price, km, loc, score, url, is_cpo, source,
+         seller_id, seller_name, rating, review_count, brand_match,
+         grade, grade_score, google_match) in rows:
+        warranty = warranty_for(year, km, search_name, bool(is_cpo))
+        grouped.setdefault(search_name, []).append({
+            "year": year, "title": title, "price": price, "km": km,
+            "location": loc, "deal_score": score, "url": url,
+            "is_cpo": bool(is_cpo),
+            "source": source,
+            "seller_name": seller_name,
+            "rating": rating,
+            "review_count": review_count,
+            "brand_match": bool(brand_match),
+            "grade": grade,
+            "grade_score": grade_score,
+            "google_match": google_match,
+            "warranty_label":  warranty["label"],
+            "warranty_detail": warranty["detail"],
+            "warranty_cls":    warranty["cls"],
+        })
+
+    # also embed a top-dealers ranking
+    dealer_rows = conn.execute("""
+        SELECT customer_id, name, google_match, rating, review_count,
+               brand_match, inventory, cpo_count, grade, grade_score
+        FROM dealers
+        ORDER BY grade_score DESC, review_count DESC
+    """).fetchall()
+    dealers = [
+        {"id": r[0], "name": r[1], "google_match": r[2], "rating": r[3],
+         "review_count": r[4], "brand_match": bool(r[5]),
+         "inventory": r[6], "cpo_count": r[7], "grade": r[8],
+         "grade_score": r[9]}
+        for r in dealer_rows
+    ]
+
+    payload = {
+        "generated": datetime.now().isoformat(timespec="seconds"),
+        "total": sum(len(v) for v in grouped.values()),
+        "searches": [{"name": k, "items": v} for k, v in grouped.items()],
+        "dealers": dealers,
+    }
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    html = HTML_TEMPLATE.replace("__DATA__", json.dumps(payload))
+    (out / "index.html").write_text(html)
+    (out / "data.json").write_text(json.dumps(payload, indent=2))
+    print(f"🌐 HTML report written: {out / 'index.html'}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def main(skip_scrape: bool = False) -> None:
+    conn = init_db(DB_PATH)
+
+    if not skip_scrape:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=HEADLESS)
+            context = await browser.new_context(
+                user_agent=("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/124.0.0.0 Safari/537.36"),
+                viewport={"width": 1366, "height": 900},
+                locale="en-CA",
+            )
+            page = await context.new_page()
+
+            for cfg in SEARCHES:
+                print(f"\n🔎 {cfg['name']}")
+                n_at = await scrape_autotrader(page, cfg, conn)
+                print(f"  AutoTrader: saved {n_at} listings")
+                n_kj = await scrape_kijiji(page, cfg, conn)
+                print(f"  Kijiji:     saved {n_kj} listings")
+
+            await browser.close()
+    else:
+        print("⏭  --skip-scrape: regenerating reports from existing DB")
+
+    for cfg in SEARCHES:
+        score_search(conn, cfg["name"])
+
+    enrich_dealers(conn)
+
+    write_report(conn, REPORT_PATH)
+    write_html_report(conn, HTML_DIR)
+    conn.close()
+
+
+if __name__ == "__main__":
+    import sys
+    asyncio.run(main(skip_scrape="--skip-scrape" in sys.argv))
