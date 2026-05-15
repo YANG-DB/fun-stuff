@@ -129,6 +129,7 @@ function friendly(code) {
     "auth/too-many-requests":      "Too many tries — wait a minute and retry.",
     "auth/network-request-failed": "Network error — check your connection.",
     "auth/operation-not-allowed":  "Email/password sign-in is disabled in this Firebase project. Enable it in the console first.",
+    "auth/admin-restricted-operation": "Sign-up is disabled. Contact the site owner if you need access.",
   })[code];
 }
 

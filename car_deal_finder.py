@@ -210,6 +210,20 @@ def init_db(path: str) -> sqlite3.Connection:
             conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {ddl}")
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS scrape_runs (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            search_name  TEXT NOT NULL,
+            source       TEXT NOT NULL,
+            started_at   TEXT NOT NULL,
+            finished_at  TEXT NOT NULL,
+            status       TEXT NOT NULL,   -- ok | blocked | no_results | error
+            listings     INTEGER DEFAULT 0,
+            unique_saved INTEGER DEFAULT 0,
+            message      TEXT
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS dealers (
             customer_id   TEXT PRIMARY KEY,
             name          TEXT,
@@ -227,6 +241,20 @@ def init_db(path: str) -> sqlite3.Connection:
     """)
     conn.commit()
     return conn
+
+def record_run(conn: sqlite3.Connection, search_name: str, source: str,
+               started_at: str, status: str, listings: int,
+               message: str | None = None) -> None:
+    """Record one (search, source) scrape outcome for the Status tab."""
+    conn.execute(
+        """INSERT INTO scrape_runs
+           (search_name, source, started_at, finished_at, status, listings, message)
+           VALUES (?,?,?,?,?,?,?)""",
+        (search_name, source, started_at,
+         datetime.utcnow().isoformat(timespec="seconds"),
+         status, listings, message),
+    )
+    conn.commit()
 
 def save(conn: sqlite3.Connection, l: Listing) -> None:
     conn.execute(
@@ -297,10 +325,10 @@ def kijiji_url(cfg: dict, page_num: int) -> str:
         return f"https://www.kijiji.ca/b-cars-trucks/british-columbia/{slug}/k0c174l9007?ad=offering"
     return f"https://www.kijiji.ca/b-cars-trucks/british-columbia/page-{page_num}/{slug}/k0c174l9007?ad=offering"
 
-async def scrape_kijiji(page: Page, cfg: dict, conn: sqlite3.Connection) -> int:
-    """Scrape Kijiji.ca BC listings. Filters year/price/km client-side since
-    Kijiji's URL-param filters are touchy. No seller_id (private sellers common)."""
+async def scrape_kijiji(page: Page, cfg: dict, conn: sqlite3.Connection) -> tuple[int, str, str | None]:
+    """Scrape Kijiji.ca BC listings. Returns (count, status, message)."""
     count = 0
+    pages_with_cards = 0
     for n in range(1, MAX_PAGES + 1):
         url = kijiji_url(cfg, n)
         print(f"  kijiji page {n} → {url}")
@@ -314,8 +342,14 @@ async def scrape_kijiji(page: Page, cfg: dict, conn: sqlite3.Connection) -> int:
 
         cards = await page.query_selector_all('[data-testid="listing-card"]')
         if not cards:
+            if n == 1:
+                # First page empty — could be a block or just no inventory.
+                if await detect_blockers(page):
+                    return count, "blocked", "Kijiji presented a challenge page on page 1"
+                return count, "no_results", "No cards returned on page 1"
             print("  no Kijiji results — stopping pagination")
             break
+        pages_with_cards += 1
         print(f"    found {len(cards)} cards on page")
 
         for card in cards:
@@ -398,9 +432,9 @@ async def scrape_kijiji(page: Page, cfg: dict, conn: sqlite3.Connection) -> int:
                 print(f"    parse warn: {e}")
 
         await page.wait_for_timeout(PAUSE_MS)
-    return count
+    return count, "ok", None
 
-async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> int:
+async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> tuple[int, str, str | None]:
     count = 0
     for n in range(1, MAX_PAGES + 1):
         url = autotrader_url(cfg, n)
@@ -417,9 +451,8 @@ async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> 
 
         if not cards and await detect_blockers(page):
             if HEADLESS:
-                # No human to solve a challenge in CI — skip and move on.
                 print("  ✗ Challenge page detected (headless mode) — skipping this search.")
-                return count
+                return count, "blocked", "AutoTrader served a challenge page in headless mode"
             print("  ⚠  Challenge page detected. Solve it in the browser — script will auto-continue.")
             waited = 0
             while await detect_blockers(page):
@@ -429,11 +462,13 @@ async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> 
                     print(f"    …still waiting ({waited}s)")
                 if waited >= 600:
                     print("  ✗ Not cleared after 10min — skipping this search.")
-                    return count
+                    return count, "blocked", "Challenge not cleared within 10 minutes"
             await page.wait_for_timeout(2000)
             cards = await page.query_selector_all('[data-testid="list-item"]')
 
         if not cards:
+            if n == 1:
+                return count, "no_results", "No cards returned on page 1"
             print("  no results — stopping pagination")
             break
 
@@ -500,7 +535,7 @@ async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> 
                 print(f"    parse warn: {e}")
 
         await page.wait_for_timeout(PAUSE_MS)
-    return count
+    return count, "ok", None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DEAL SCORING (price ~ year + km, linear)
@@ -1064,6 +1099,83 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   th.col-match, td.col-match { display: none; }
   .panel.match-on th.col-match,
   .panel.match-on td.col-match { display: table-cell; }
+  /* Status panel */
+  .status-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 18px;
+  }
+  .status-card {
+    background: #f5f7fb; padding: 12px 14px; border-radius: 8px;
+    border-left: 4px solid #c8d2e0;
+  }
+  .status-card .num { font-size: 1.5em; font-weight: 700; color: #1f2937; }
+  .status-card .lbl { font-size: 0.82em; color: #6b7280; }
+  .status-card.ok      { border-left-color: #15803d; }
+  .status-card.warn    { border-left-color: #ca8a04; }
+  .status-card.err     { border-left-color: #b91c1c; }
+  .status-badge {
+    display: inline-block; padding: 3px 8px; border-radius: 4px;
+    font-size: 0.78em; font-weight: 600; white-space: nowrap;
+  }
+  .status-badge.ok         { background: #dcfce7; color: #14532d; }
+  .status-badge.blocked    { background: #fee2e2; color: #7f1d1d; }
+  .status-badge.no_results { background: #f1f5f9; color: #475569; }
+  .status-badge.error      { background: #fee2e2; color: #7f1d1d; }
+  .status-badge.never      { background: #fef3c7; color: #78350f; }
+  .status-msg { font-size: 0.82em; color: #6b7280; max-width: 360px; }
+  /* Per-listing notes */
+  .note-btn {
+    background: none; border: 1px solid #c8d2e0; color: #6b7280;
+    padding: 2px 7px; border-radius: 5px; cursor: pointer; font-size: 0.95em;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .note-btn:hover { background: #eef2f7; }
+  .note-btn.has-note {
+    border-color: #2a5298; color: #2a5298; background: #eff6ff;
+    font-weight: 600;
+  }
+  #note-modal {
+    position: fixed; inset: 0; z-index: 5000;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #note-modal.open { display: flex; }
+  #note-modal .bg { position: absolute; inset: 0; background: rgba(15, 32, 39, 0.5); }
+  #note-modal .content {
+    position: relative; background: #fff; border-radius: 12px;
+    padding: 24px 28px; width: 100%; max-width: 540px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.3); z-index: 1;
+  }
+  #note-modal h3 { font-size: 1.05em; color: #0f2027; margin-bottom: 6px; line-height: 1.3; }
+  #note-modal .meta-line {
+    color: #6b7280; font-size: 0.85em; margin-bottom: 14px;
+    padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;
+  }
+  #note-modal textarea {
+    width: 100%; min-height: 160px; padding: 12px;
+    border: 1px solid #c8d2e0; border-radius: 8px; font-size: 0.95em;
+    font-family: inherit; line-height: 1.5; resize: vertical;
+  }
+  #note-modal textarea:focus { outline: none; border-color: #2a5298; }
+  #note-modal .actions {
+    margin-top: 14px; display: flex; gap: 8px; align-items: center;
+  }
+  #note-modal .actions button {
+    padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #c8d2e0; background: #fff; font-size: 0.92em;
+    font-weight: 500; font-family: inherit;
+  }
+  #note-modal .actions .save { background: #2a5298; color: #fff; border-color: #2a5298; }
+  #note-modal .actions .save:hover { background: #1e3c72; }
+  #note-modal .actions .delete { color: #b91c1c; border-color: #fecaca; }
+  #note-modal .actions .delete:hover { background: #fee2e2; }
+  #note-modal .actions .spacer { flex: 1; }
+  .export-btn {
+    background: #fff; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 12px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 600;
+  }
+  .export-btn:hover:not(:disabled) { background: #eef2f7; }
+  .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .total-cell {
     white-space: nowrap; position: relative; cursor: help;
     border-bottom: 1px dotted #999; display: inline-block;
@@ -1134,6 +1246,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="meta">
     <span>Total listings: <strong id="total">—</strong></span>
     <span>Dealers: <strong id="dealer-count">—</strong></span>
+    <button class="export-btn" id="export-md" disabled>📋 Export notes (0)</button>
     <button class="matrix-toggle" id="matrix-toggle">🎯 Customize match score: OFF</button>
   </div>
   <div class="matrix-panel" id="matrix-panel">
@@ -1148,6 +1261,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
   <div class="tabs" id="tabs"></div>
   <div id="panels"></div>
+</div>
+
+<div id="note-modal" role="dialog" aria-modal="true">
+  <div class="bg" data-close></div>
+  <div class="content">
+    <h3 id="note-title">—</h3>
+    <div class="meta-line" id="note-meta">—</div>
+    <textarea id="note-text" placeholder="What I want to remember about this car — CarFax findings, viewing notes, dealer conversations, things to verify, gut feel."></textarea>
+    <div class="actions">
+      <button class="delete" id="note-delete">Delete note</button>
+      <span class="spacer"></span>
+      <button id="note-cancel" data-close>Cancel</button>
+      <button class="save" id="note-save">Save</button>
+    </div>
+  </div>
 </div>
 
 <script id="data" type="application/json">__DATA__</script>
@@ -1404,6 +1532,160 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return `<span class="badge src-${src || 'unknown'}">${esc(label)}</span>`;
   }
 
+  // ── Per-listing notes ────────────────────────────────────────────────
+  const NOTES_KEY = 'car-notes-v1';
+  let notes = {};
+  try { notes = JSON.parse(localStorage.getItem(NOTES_KEY) || '{}') || {}; } catch (e) {}
+
+  function getNote(url) { return notes[url] || ''; }
+  function setNote(url, text) {
+    if (text && text.trim()) notes[url] = text.trim();
+    else delete notes[url];
+    try { localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); } catch (e) {}
+    refreshNoteButtons();
+    updateExportBtn();
+  }
+
+  function noteBtnHtml(url) {
+    const has = !!getNote(url);
+    const tip = has ? 'Note: ' + getNote(url).slice(0, 80) + (getNote(url).length > 80 ? '…' : '') : 'Add note';
+    return `<button class="note-btn${has ? ' has-note' : ''}" data-note-url="${esc(url)}" title="${esc(tip)}">${has ? '📝' : '💬'}</button>`;
+  }
+
+  function refreshNoteButtons() {
+    document.querySelectorAll('button[data-note-url]').forEach(btn => {
+      const url = btn.dataset.noteUrl;
+      const has = !!getNote(url);
+      btn.classList.toggle('has-note', has);
+      btn.textContent = has ? '📝' : '💬';
+      btn.title = has ? 'Note: ' + getNote(url).slice(0, 80) + (getNote(url).length > 80 ? '…' : '') : 'Add note';
+    });
+  }
+
+  // ── Note modal ───────────────────────────────────────────────────────
+  let modalUrl = null;
+  function openNoteModal(it) {
+    modalUrl = it.url;
+    document.getElementById('note-title').textContent = (it.year ?? '?') + ' ' + it.title;
+    const dealerStr = it.seller_name ? it.seller_name + (it.grade ? ' (Grade ' + it.grade + ')' : '') : '—';
+    const km = it.km != null ? it.km.toLocaleString() + ' km' : '? km';
+    document.getElementById('note-meta').innerHTML =
+      `${fmtMoney(it.price)} · ${km} · ${esc(dealerStr)} · <a href="${esc(it.url)}" target="_blank" rel="noopener">view listing ↗</a>`;
+    document.getElementById('note-text').value = getNote(it.url);
+    document.getElementById('note-modal').classList.add('open');
+    setTimeout(() => document.getElementById('note-text').focus(), 50);
+  }
+  function closeNoteModal() {
+    modalUrl = null;
+    document.getElementById('note-modal').classList.remove('open');
+  }
+
+  document.getElementById('note-modal').addEventListener('click', e => {
+    if (e.target.matches('[data-close]')) closeNoteModal();
+  });
+  document.getElementById('note-save').addEventListener('click', () => {
+    if (modalUrl) setNote(modalUrl, document.getElementById('note-text').value);
+    closeNoteModal();
+  });
+  document.getElementById('note-delete').addEventListener('click', () => {
+    if (modalUrl) setNote(modalUrl, '');
+    closeNoteModal();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('note-modal').classList.contains('open')) {
+      closeNoteModal();
+    }
+  });
+
+  // Delegated click → open modal when any note button is clicked
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-note-url]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const url = btn.dataset.noteUrl;
+    // find the item across all searches
+    let found = null;
+    for (const s of payload.searches) {
+      const m = s.items.find(it => it.url === url);
+      if (m) { found = m; break; }
+    }
+    if (found) openNoteModal(found);
+  });
+
+  // ── Markdown export ──────────────────────────────────────────────────
+  function exportNotesMarkdown() {
+    const all = [];
+    payload.searches.forEach(s => s.items.forEach(it => all.push({...it, _search: s.name})));
+    const annotated = all.filter(it => !!getNote(it.url));
+    if (!annotated.length) { alert('No notes yet.'); return; }
+
+    const lines = [];
+    lines.push(`# Car listings — annotated notes`);
+    lines.push(``);
+    lines.push(`_Exported ${new Date().toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' })}_`);
+    lines.push(``);
+    lines.push(`Source data scraped ${payload.generated}. Total listings in scrape: ${all.length}. Listings annotated below: ${annotated.length}.`);
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+    annotated.forEach(it => {
+      const total = totalPrice(it);
+      lines.push(`## ${it.year ?? '?'} — ${it.title}`);
+      lines.push(``);
+      lines.push(`- **Search bucket:** ${it._search}`);
+      lines.push(`- **Source:** ${it.source}`);
+      lines.push(`- **Sticker:** ${fmtMoney(it.price)}` + (total ? `  ·  **Out the door:** ${fmtMoney(total)}` : ''));
+      lines.push(`- **Odometer:** ${fmtKm(it.km)}`);
+      lines.push(`- **Year:** ${it.year ?? '?'}`);
+      lines.push(`- **Deal score vs market:** ${fmtPct(it.deal_score)}`);
+      const sellerLine = it.seller_name
+        ? `${it.seller_name} (Grade ${it.grade || '?'}${it.rating != null ? `, ⭐${it.rating}/${(it.review_count||0).toLocaleString()} Google reviews` : ''}${it.brand_match ? ', brand-name dealer' : ''}${it.is_cpo ? ', CPO listing' : ''})`
+        : 'Private / unknown';
+      lines.push(`- **Seller:** ${sellerLine}`);
+      lines.push(`- **Warranty status:** ${it.warranty_label} — ${it.warranty_detail || ''}`);
+      lines.push(`- **Location:** ${it.location || '—'}`);
+      lines.push(`- **Listing URL:** ${it.url}`);
+      lines.push(``);
+      lines.push(`**My note:**`);
+      lines.push(``);
+      const note = getNote(it.url).split('\n').map(l => '> ' + l).join('\n');
+      lines.push(note);
+      lines.push(``);
+      lines.push(`---`);
+      lines.push(``);
+    });
+    return lines.join('\n');
+  }
+
+  function updateExportBtn() {
+    const btn = document.getElementById('export-md');
+    const n = Object.values(notes).filter(v => v && v.trim()).length;
+    btn.textContent = `📋 Export notes (${n})`;
+    btn.disabled = n === 0;
+  }
+  document.getElementById('export-md').addEventListener('click', () => {
+    const md = exportNotesMarkdown();
+    if (!md) return;
+    // Try clipboard first, fall back to download
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(md).then(
+        () => alert(`Copied ${Object.values(notes).filter(v=>v.trim()).length} annotated listing(s) as markdown to your clipboard.\n\nPaste into your favorite AI chat to ask for cross-listing analysis.`),
+        () => downloadMarkdown(md)
+      );
+    } else {
+      downloadMarkdown(md);
+    }
+  });
+  function downloadMarkdown(text) {
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `car-notes-${new Date().toISOString().slice(0,10)}.md`;
+    a.click();
+  }
+  updateExportBtn();
+
   function warrantyCell(it) {
     const cls = it.warranty_cls || 'unknown';
     const label = it.warranty_label || '—';
@@ -1427,7 +1709,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <td>${dealerCell(it)}</td>
         <td>${warrantyCell(it)}</td>
         <td class="hide-sm">${esc(it.location || '')}</td>
-        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a></td>
+        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a> ${noteBtnHtml(it.url)}</td>
       </tr>`;
   }
 
@@ -1783,7 +2065,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <td>${fmtMoney(total)}</td>
           <td>${fmtKm(it.km)}</td>
           <td>${warrantyCell(it)}</td>
-          <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a></td>
+          <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a> ${noteBtnHtml(it.url)}</td>
         </tr>`;
       }).join('');
       const moreCount = d.listings.length - top.length;
@@ -1878,6 +2160,90 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return panel;
   }
 
+  function buildStatusPanel(searches, runs, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel';
+
+    const SOURCES = ['autotrader', 'kijiji'];
+    const SOURCE_LABEL = { autotrader: 'AutoTrader', kijiji: 'Kijiji' };
+    const STATUS_LABEL = {
+      ok: 'OK', blocked: 'Blocked', no_results: 'No results',
+      error: 'Error', never: 'Never run',
+    };
+    const STATUS_ICON = {
+      ok: '✅', blocked: '⛔', no_results: '·',
+      error: '❌', never: '⏳',
+    };
+
+    // Index runs by (search, source)
+    const byKey = {};
+    (runs || []).forEach(r => { byKey[r.search_name + '|' + r.source] = r; });
+
+    // Build a row for every expected pair (even if no run yet)
+    const rows = [];
+    searches.forEach(s => {
+      SOURCES.forEach(src => {
+        const key = s.name + '|' + src;
+        rows.push({
+          search: s.name, source: src,
+          run: byKey[key] || null,
+        });
+      });
+    });
+
+    // Summary counts
+    const seen = rows.filter(r => r.run);
+    const okN     = seen.filter(r => r.run.status === 'ok').length;
+    const blockN  = seen.filter(r => r.run.status === 'blocked').length;
+    const emptyN  = seen.filter(r => r.run.status === 'no_results').length;
+    const errN    = seen.filter(r => r.run.status === 'error').length;
+    const neverN  = rows.length - seen.length;
+
+    const summaryHtml = `
+      <div class="status-summary">
+        <div class="status-card ok"><div class="num">${okN}</div><div class="lbl">OK</div></div>
+        <div class="status-card warn"><div class="num">${blockN}</div><div class="lbl">Blocked</div></div>
+        <div class="status-card"><div class="num">${emptyN}</div><div class="lbl">No results</div></div>
+        <div class="status-card err"><div class="num">${errN}</div><div class="lbl">Errors</div></div>
+        ${neverN ? `<div class="status-card warn"><div class="num">${neverN}</div><div class="lbl">Never run</div></div>` : ''}
+      </div>`;
+
+    const trs = rows.map(r => {
+      const run = r.run;
+      const status = run ? run.status : 'never';
+      const when = run ? relativeAgo(run.finished_at).text : '—';
+      const fullWhen = run
+        ? new Date(run.finished_at).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' })
+        : '';
+      return `<tr>
+        <td>${esc(r.search)}</td>
+        <td><span class="badge src-${r.source}">${SOURCE_LABEL[r.source]}</span></td>
+        <td><span class="status-badge ${status}">${STATUS_ICON[status]} ${STATUS_LABEL[status]}</span></td>
+        <td>${run ? run.listings : '—'}</td>
+        <td title="${esc(fullWhen)}">${when}</td>
+        <td class="status-msg">${esc(run && run.message ? run.message : '')}</td>
+      </tr>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <h2>📡 Scrape status</h2>
+      <div class="panel-meta">Last run per source for each search. <strong>OK</strong> = listings returned; <strong>Blocked</strong> = the site served a challenge page (CAPTCHA / bot check); <strong>No results</strong> = page loaded but had zero cards; <strong>Error</strong> = exception during scrape.</div>
+      ${summaryHtml}
+      <table>
+        <thead><tr>
+          <th>Search</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Listings</th>
+          <th>Last run</th>
+          <th>Message</th>
+        </tr></thead>
+        <tbody>${trs}</tbody>
+      </table>`;
+    return panel;
+  }
+
   function makeTab(label, idx, isActive) {
     const t = document.createElement('button');
     t.className = 'tab' + (isActive ? ' active' : '');
@@ -1903,6 +2269,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   const tourIdx = dealersIdx + 1;
   tabsEl.appendChild(makeTab(`🗺️ Dealer Tour`, tourIdx, false));
   panelsEl.appendChild(buildDealerTourPanel(payload.searches, payload.dealers || [], tourIdx));
+
+  const statusIdx = tourIdx + 1;
+  const okCount = (payload.runs || []).filter(r => r.status === 'ok').length;
+  const expectedCount = (payload.searches.length * 2);   // 2 sources per search
+  tabsEl.appendChild(makeTab(`📡 Status (${okCount}/${expectedCount})`, statusIdx, false));
+  panelsEl.appendChild(buildStatusPanel(payload.searches, payload.runs || [], statusIdx));
 
   setupMatrixUI();
 })();
@@ -1961,11 +2333,27 @@ def write_html_report(conn: sqlite3.Connection, out_dir: str) -> None:
         for r in dealer_rows
     ]
 
+    # Latest run per (search, source) for the Status tab
+    run_rows = conn.execute("""
+        SELECT search_name, source, started_at, finished_at, status, listings, message
+        FROM scrape_runs
+        WHERE id IN (
+            SELECT MAX(id) FROM scrape_runs GROUP BY search_name, source
+        )
+        ORDER BY search_name, source
+    """).fetchall()
+    runs = [
+        {"search_name": r[0], "source": r[1], "started_at": r[2],
+         "finished_at": r[3], "status": r[4], "listings": r[5], "message": r[6]}
+        for r in run_rows
+    ]
+
     payload = {
         "generated": datetime.now().isoformat(timespec="seconds"),
         "total": sum(len(v) for v in grouped.values()),
         "searches": [{"name": k, "items": v} for k, v in grouped.items()],
         "dealers": dealers,
+        "runs": runs,
     }
 
     out = Path(out_dir)
@@ -1996,10 +2384,18 @@ async def main(skip_scrape: bool = False) -> None:
 
             for cfg in SEARCHES:
                 print(f"\n🔎 {cfg['name']}")
-                n_at = await scrape_autotrader(page, cfg, conn)
-                print(f"  AutoTrader: saved {n_at} listings")
-                n_kj = await scrape_kijiji(page, cfg, conn)
-                print(f"  Kijiji:     saved {n_kj} listings")
+                for src, scraper in (("autotrader", scrape_autotrader),
+                                     ("kijiji",     scrape_kijiji)):
+                    started = datetime.utcnow().isoformat(timespec="seconds")
+                    try:
+                        n, status, msg = await scraper(page, cfg, conn)
+                    except Exception as e:
+                        n, status, msg = 0, "error", str(e)[:300]
+                        print(f"  {src} error: {msg}")
+                    record_run(conn, cfg["name"], src, started, status, n, msg)
+                    label = {"ok":"✅","blocked":"⛔","no_results":"·","error":"❌"}.get(status, "?")
+                    print(f"  {src}: {label} {status}, {n} listings"
+                          + (f" ({msg})" if msg else ""))
 
             await browser.close()
     else:
