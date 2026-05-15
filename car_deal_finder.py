@@ -77,6 +77,77 @@ SEARCHES: list[dict] = [
         "must_match": [r"\bAWD\b", r"\bHybrid\b"],
         "drop_match": [r"\bPrime\b"],   # exclude PHEV
     },
+    {
+        # Best fit for: learner driver, town commute, near-zero maintenance,
+        # exceptional resale. FWD by default — AWD (E-Four) is rare and
+        # priced higher, so we don't require AWD here.
+        "name": "Toyota Corolla Hybrid (learner + commuter)",
+        "make": "toyota",
+        "model": "corolla-hybrid",
+        "year_min": 2020,
+        "year_max": 2024,
+        "price_min": 18_000,
+        "price_max": 32_000,
+        "km_max": 100_000,
+        "must_match": [r"\bHybrid\b"],
+        "drop_match": [],
+    },
+    {
+        # Comparison check vs hybrids. Exclude Performance trim (way too
+        # punchy for a learner). Excludes Model Y / S / X by URL specificity.
+        "name": "Tesla Model 3 (EV comparison)",
+        "make": "tesla",
+        "model": "model-3",
+        "year_min": 2019,
+        "year_max": 2023,
+        "price_min": 20_000,
+        "price_max": 38_000,
+        "km_max": 120_000,
+        "must_match": [],
+        "drop_match": [r"\bPerformance\b"],
+    },
+    {
+        # Direct Corolla Hybrid competitor — often $3-5k cheaper for the
+        # same powertrain class, with the best basic warranty in segment.
+        "name": "Hyundai Elantra Hybrid (Corolla alternative)",
+        "make": "hyundai",
+        "model": "elantra-hybrid",
+        "year_min": 2021,
+        "year_max": 2024,
+        "price_min": 20_000,
+        "price_max": 32_000,
+        "km_max": 100_000,
+        "must_match": [r"\bHybrid\b"],
+        "drop_match": [],
+    },
+    {
+        # Best-in-class hybrid economy. 5th-gen only (2023+). Excludes
+        # Prius Prime PHEV. AWD (E-Four) included on XSE/LE.
+        "name": "Toyota Prius (5th gen, learner-friendly)",
+        "make": "toyota",
+        "model": "prius",
+        "year_min": 2023,
+        "year_max": 2024,
+        "price_min": 28_000,
+        "price_max": 42_000,
+        "km_max": 80_000,
+        "must_match": [],
+        "drop_match": [r"\bPrime\b"],
+    },
+    {
+        # Most learner-friendly gas car in segment. Excludes Si performance
+        # trim, Type R, and Civic Hybrid (separate search if wanted).
+        "name": "Honda Civic (gas, learner pick)",
+        "make": "honda",
+        "model": "civic",
+        "year_min": 2022,
+        "year_max": 2024,
+        "price_min": 18_000,
+        "price_max": 30_000,
+        "km_max": 80_000,
+        "must_match": [],
+        "drop_match": [r"\bSi\b", r"\bType R\b", r"\bHybrid\b"],
+    },
 ]
 
 LOCATION    = "Vancouver, BC"
@@ -86,7 +157,8 @@ DB_PATH     = "car_deals.db"
 REPORT_PATH = "deals_report.md"
 HTML_DIR    = "car-deals"     # output dir for the deployable site
 DEALER_CACHE_DAYS = 7         # re-fetch Google data weekly
-HEADLESS    = False           # False so you can solve CAPTCHAs by hand
+HEADLESS    = os.environ.get("HEADLESS", "false").lower() in ("true", "1", "yes")
+# False locally so you can solve CAPTCHAs by hand. True in CI (set HEADLESS=true).
 MAX_PAGES   = 5               # per search
 PAGE_SIZE   = 25
 PAUSE_MS    = 1500            # be polite
@@ -344,6 +416,10 @@ async def scrape_autotrader(page: Page, cfg: dict, conn: sqlite3.Connection) -> 
         cards = await page.query_selector_all('[data-testid="list-item"]')
 
         if not cards and await detect_blockers(page):
+            if HEADLESS:
+                # No human to solve a challenge in CI — skip and move on.
+                print("  ✗ Challenge page detected (headless mode) — skipping this search.")
+                return count
             print("  ⚠  Challenge page detected. Solve it in the browser — script will auto-continue.")
             waited = 0
             while await detect_blockers(page):
@@ -516,7 +592,8 @@ def google_text_search(query: str, key: str, attempts: int = 3) -> dict | None:
     return None
 
 def _make_for_search(search_name: str) -> str | None:
-    """Heuristic: guess the make from the search name (first word)."""
+    """Heuristic: guess the make from the search name (first word).
+    Tesla already covered."""
     m = re.search(r"\b(toyota|mazda|honda|nissan|hyundai|kia|ford|chevrolet|"
                   r"subaru|bmw|audi|volkswagen|vw|mercedes|tesla|jeep|ram|"
                   r"dodge|gmc|cadillac|lexus|infiniti|acura|porsche|volvo|"
@@ -642,10 +719,15 @@ WARRANTY_RULES: dict[str, dict[str, tuple[int, int]]] = {
         "powertrain":       (5, 100_000),
         "cpo_powertrain":   (7, 140_000),
     },
-    "honda":   {"basic": (3,  60_000), "powertrain": (5, 100_000)},
+    "honda":   {"basic": (3,  60_000), "powertrain": (5, 100_000),
+                "cpo_powertrain": (7, 100_000)},     # HondaTrue Certified
     "nissan":  {"basic": (3,  60_000), "powertrain": (5, 100_000)},
-    "hyundai": {"basic": (5, 100_000), "powertrain": (5, 100_000)},
+    "hyundai": {"basic": (5, 100_000), "powertrain": (5, 100_000),
+                "hybrid": (10, 200_000)},            # subsequent-owner transferable
     "kia":     {"basic": (5, 100_000), "powertrain": (5, 100_000)},
+    # Tesla Model 3 SR+/Long Range: 4yr/80k basic, 8yr/160k battery+drive unit
+    # with min 70% capacity retention. No traditional CPO program in Canada.
+    "tesla":   {"basic": (4,  80_000), "powertrain": (8, 160_000)},
 }
 
 def warranty_for(year: int | None, km: int | None, search_name: str | None,
@@ -660,7 +742,7 @@ def warranty_for(year: int | None, km: int | None, search_name: str | None,
         return {"label": "—", "detail": "Model year not parsed.", "cls": "unknown"}
 
     make_match = re.search(
-        r"\b(toyota|mazda|honda|nissan|hyundai|kia)\b",
+        r"\b(toyota|mazda|honda|nissan|hyundai|kia|tesla)\b",
         search_name or "", re.I,
     )
     make_key = make_match.group(1).lower() if make_match else None
@@ -768,6 +850,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BC Used Car Deal Finder</title>
+<script type="module" src="auth.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -788,6 +871,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .meta { padding: 16px 32px; background: #f5f7fb; color: #555;
           font-size: 0.85em; border-bottom: 1px solid #e5e7eb;
           display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .freshness {
+    padding: 16px 32px; display: flex; align-items: center; gap: 14px;
+    font-size: 1.05em; font-weight: 500; border-bottom: 1px solid #e5e7eb;
+  }
+  .freshness .ico { font-size: 1.6em; }
+  .freshness .ago { font-weight: 700; font-size: 1.15em; }
+  .freshness .full { font-size: 0.85em; opacity: 0.7; margin-left: auto; }
+  .freshness.fresh  { background: #dcfce7; color: #14532d; }
+  .freshness.recent { background: #dbeafe; color: #1e3a8a; }
+  .freshness.stale  { background: #fef3c7; color: #78350f; }
+  .freshness.old    { background: #fee2e2; color: #7f1d1d; }
+  @media (max-width: 700px) {
+    .freshness { padding: 12px 16px; font-size: 0.95em; flex-wrap: wrap; }
+    .freshness .full { margin-left: 0; flex-basis: 100%; }
+  }
   .tabs {
     display: flex; gap: 4px; padding: 16px 32px 0; background: #fff;
     border-bottom: 2px solid #e5e7eb; flex-wrap: wrap;
@@ -843,6 +941,55 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .badge.brand { background: #fef3c7; color: #92400e; }
   .badge.src-autotrader { background: #ecfdf5; color: #065f46; }
   .badge.src-kijiji     { background: #fef3c7; color: #78350f; }
+  /* Dealer tour panel */
+  .tour-controls {
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .tour-controls label { display: flex; gap: 6px; align-items: center; font-size: 0.9em; }
+  .tour-controls select { padding: 4px 8px; border: 1px solid #c8d2e0; border-radius: 4px; background: #fff; }
+  .tour-controls .summary { margin-left: auto; color: #555; font-size: 0.9em; }
+  .dealer-card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+    margin-bottom: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .dealer-card-header {
+    background: #f8fafc; padding: 14px 18px; display: flex; gap: 14px;
+    align-items: flex-start; border-bottom: 1px solid #e5e7eb;
+  }
+  .dealer-card-grade { flex-shrink: 0; }
+  .dealer-card-info { flex: 1; min-width: 0; }
+  .dealer-card-info h3 {
+    font-size: 1.05em; color: #0f2027; margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .dealer-card-meta { font-size: 0.85em; color: #4b5563; margin-bottom: 2px; }
+  .dealer-card-addr { font-size: 0.82em; color: #6b7280; }
+  .dealer-card-best { font-size: 0.95em; color: #c2410c; font-weight: 600;
+                      align-self: center; white-space: nowrap; margin-left: 12px; }
+  .dealer-card .listings-table {
+    width: 100%; border-collapse: collapse; margin: 0; font-size: 0.85em;
+    box-shadow: none; border-radius: 0;
+  }
+  .dealer-card .listings-table th,
+  .dealer-card .listings-table td {
+    padding: 6px 12px; border-bottom: 1px solid #f1f3f7;
+  }
+  .dealer-card .listings-table th {
+    background: #fafbfd; font-weight: 600; color: #6b7280;
+    font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .dealer-card .listings-table tr:last-child td { border-bottom: none; }
+  .dealer-card .listings-table .deal { font-weight: 600; }
+  .visit-check {
+    display: flex; align-items: center; gap: 6px; margin-left: 10px;
+    font-size: 0.85em; color: #2a5298;
+  }
+  .visit-check input { accent-color: #2a5298; cursor: pointer; }
+  @media print {
+    .dealer-card:not(.planned) { display: none; }
+    .tour-controls { display: none; }
+  }
   .warr {
     display: inline-block; padding: 2px 6px; border-radius: 4px;
     font-size: 0.78em; font-weight: 600; white-space: nowrap;
@@ -979,8 +1126,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <p>Listings ranked against a year + km regression. Dealer grade combines Google reviews, brand affiliation, CPO badges, and inventory.</p>
     <p style="margin-top:8px;font-size:0.9em;"><a href="checklist.html" style="color:#9ec5ff;text-decoration:underline;">📋 Pre-purchase checklist →</a></p>
   </header>
+  <div class="freshness" id="freshness">
+    <span class="ico">📡</span>
+    <div>Latest scan: <span class="ago" id="freshness-ago">—</span></div>
+    <span class="full" id="freshness-full">—</span>
+  </div>
   <div class="meta">
-    <span>Generated: <strong id="generated">—</strong></span>
     <span>Total listings: <strong id="total">—</strong></span>
     <span>Dealers: <strong id="dealer-count">—</strong></span>
     <button class="matrix-toggle" id="matrix-toggle">🎯 Customize match score: OFF</button>
@@ -1003,7 +1154,42 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <script>
 (function () {
   const payload = JSON.parse(document.getElementById('data').textContent);
-  document.getElementById('generated').textContent = payload.generated;
+
+  // ── Freshness indicator ───────────────────────────────────────────────
+  function relativeAgo(iso) {
+    const t = new Date(iso);
+    if (isNaN(t)) return { text: 'unknown', hoursAgo: Infinity };
+    const ms = Date.now() - t.getTime();
+    const s = ms / 1000;
+    const m = s / 60;
+    const h = m / 60;
+    const d = h / 24;
+    let text;
+    if (s < 90)      text = 'just now';
+    else if (m < 60) text = Math.round(m) + ' min ago';
+    else if (h < 24) text = Math.round(h) + ' hour' + (Math.round(h) === 1 ? '' : 's') + ' ago';
+    else if (d < 7)  text = Math.round(d) + ' day' + (Math.round(d) === 1 ? '' : 's') + ' ago';
+    else             text = Math.round(d) + ' days ago';
+    return { text, hoursAgo: h };
+  }
+  function freshnessClass(hoursAgo) {
+    if (hoursAgo < 12)  return 'fresh';
+    if (hoursAgo < 36)  return 'recent';
+    if (hoursAgo < 168) return 'stale';
+    return 'old';
+  }
+  function updateFreshness() {
+    const f = document.getElementById('freshness');
+    const ago = relativeAgo(payload.generated);
+    document.getElementById('freshness-ago').textContent = ago.text;
+    document.getElementById('freshness-full').textContent =
+      'Scraped at ' + new Date(payload.generated).toLocaleString('en-CA',
+        { dateStyle: 'medium', timeStyle: 'short' });
+    f.className = 'freshness ' + freshnessClass(ago.hoursAgo);
+  }
+  updateFreshness();
+  setInterval(updateFreshness, 60_000);  // re-tick once a minute
+
   document.getElementById('total').textContent = payload.total;
   document.getElementById('dealer-count').textContent = (payload.dealers || []).length;
 
@@ -1531,6 +1717,167 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return panel;
   }
 
+  function buildDealerTourPanel(searches, dealers, idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel';
+
+    // Index dealers by id, attach their listings from all searches
+    const byId = {};
+    dealers.forEach(d => { byId[d.id] = { ...d, listings: [] }; });
+    searches.forEach(s => {
+      s.items.forEach(it => {
+        if (it.seller_id && byId[it.seller_id]) {
+          byId[it.seller_id].listings.push({ ...it, search: s.name });
+        }
+      });
+    });
+
+    const allDealers = Object.values(byId).filter(d => d.listings.length > 0);
+    if (!allDealers.length) {
+      panel.innerHTML = `<h2>Dealer tour plan</h2>
+        <div class="empty">No dealer-attached listings yet.</div>`;
+      return panel;
+    }
+
+    // Compute per-dealer best deal score
+    allDealers.forEach(d => {
+      d.listings.sort((a, b) => (a.deal_score ?? 1) - (b.deal_score ?? 1));
+      d.best_deal = d.listings[0].deal_score;
+    });
+
+    const state = {
+      sort: 'best_deal',   // best_deal | grade | listings
+      minGrade: 'ALL',
+      cpoOnly: false,
+      planned: new Set(JSON.parse(localStorage.getItem('dealer-tour-planned') || '[]')),
+    };
+
+    function rankedDealers() {
+      let out = allDealers.filter(d => {
+        if (state.minGrade !== 'ALL' && (GRADE_RANK[d.grade] || 0) < (GRADE_RANK[state.minGrade] || 0)) return false;
+        if (state.cpoOnly && !d.listings.some(l => l.is_cpo)) return false;
+        return true;
+      });
+      if (state.sort === 'best_deal') {
+        out.sort((a, b) => (a.best_deal ?? 1) - (b.best_deal ?? 1));
+      } else if (state.sort === 'grade') {
+        out.sort((a, b) => (GRADE_RANK[b.grade] || 0) - (GRADE_RANK[a.grade] || 0)
+                          || (a.best_deal ?? 1) - (b.best_deal ?? 1));
+      } else if (state.sort === 'listings') {
+        out.sort((a, b) => b.listings.length - a.listings.length);
+      }
+      return out;
+    }
+
+    function dealerCardHtml(d) {
+      const top = d.listings.slice(0, 5);
+      const rows = top.map(it => {
+        const [label, cls] = flagFor(it.deal_score);
+        const total = totalPrice(it);
+        const make = (it.search || '').split(' ')[0];   // approximate
+        return `<tr>
+          <td class="deal ${cls}">${label} ${fmtPct(it.deal_score)}</td>
+          <td>${it.year ?? '?'}</td>
+          <td>${esc(it.title.length > 50 ? it.title.slice(0,50)+'…' : it.title)}</td>
+          <td>${fmtMoney(total)}</td>
+          <td>${fmtKm(it.km)}</td>
+          <td>${warrantyCell(it)}</td>
+          <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a></td>
+        </tr>`;
+      }).join('');
+      const moreCount = d.listings.length - top.length;
+      const moreNote = moreCount > 0 ? `<tr><td colspan="7" style="color:#6b7280;font-style:italic;">…and ${moreCount} more listing${moreCount > 1 ? 's' : ''} from this dealer</td></tr>` : '';
+      const checked = state.planned.has(d.id) ? 'checked' : '';
+      return `<div class="dealer-card${state.planned.has(d.id) ? ' planned' : ''}" data-dealer="${esc(d.id)}">
+        <div class="dealer-card-header">
+          <span class="grade ${(d.grade && /^[A-F]$/.test(d.grade)) ? d.grade : 'U'} dealer-card-grade">${esc(d.grade || '?')}</span>
+          <div class="dealer-card-info">
+            <h3>${esc(d.name || '—')}${d.brand_match ? ' <span class="badge brand">brand</span>' : ''}${d.listings.some(l => l.is_cpo) ? ' <span class="badge cpo">CPO available</span>' : ''}</h3>
+            <div class="dealer-card-meta">
+              ${d.rating != null ? '⭐' + d.rating + ' (' + (d.review_count || 0).toLocaleString() + ' Google reviews)' : 'No Google match'}
+               · ${d.listings.length} listing${d.listings.length > 1 ? 's' : ''} in your search${d.cpo_count ? ' · ' + d.cpo_count + ' CPO' : ''}
+            </div>
+            <div class="dealer-card-addr">${esc(d.google_match || '')}</div>
+          </div>
+          <span class="dealer-card-best">Best: ${fmtPct(d.best_deal)}</span>
+          <label class="visit-check"><input type="checkbox" data-plan="${esc(d.id)}" ${checked}>Plan visit</label>
+        </div>
+        <table class="listings-table">
+          <thead><tr>
+            <th>Deal</th><th>Year</th><th>Title</th>
+            <th>Total</th><th>KM</th><th>Warranty</th><th>Link</th>
+          </tr></thead>
+          <tbody>${rows}${moreNote}</tbody>
+        </table>
+      </div>`;
+    }
+
+    function rerender() {
+      const ranked = rankedDealers();
+      const plannedCount = state.planned.size;
+      panel.querySelector('.summary').innerHTML =
+        `${ranked.length} of ${allDealers.length} dealers shown · <strong>${plannedCount}</strong> planned for visit`;
+      panel.querySelector('#tour-list').innerHTML = ranked.map(dealerCardHtml).join('');
+      // wire visit checkboxes
+      panel.querySelectorAll('input[data-plan]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const id = cb.dataset.plan;
+          if (cb.checked) state.planned.add(id); else state.planned.delete(id);
+          try { localStorage.setItem('dealer-tour-planned', JSON.stringify([...state.planned])); } catch (e) {}
+          // toggle planned class without full re-render to avoid scroll jump
+          const card = cb.closest('.dealer-card');
+          if (card) card.classList.toggle('planned', cb.checked);
+          panel.querySelector('.summary').innerHTML =
+            `${ranked.length} of ${allDealers.length} dealers shown · <strong>${state.planned.size}</strong> planned for visit`;
+        });
+      });
+    }
+
+    panel.innerHTML = `
+      <h2>🗺️ Dealer tour — plan which dealerships to visit</h2>
+      <div class="panel-meta">Ranked so the dealership with the hottest single offer is first. Tick "Plan visit" to mark a dealer; tick a few then use Print to get a paper itinerary of just your planned visits.</div>
+      <div class="tour-controls">
+        <label>Sort by
+          <select data-fld="sort">
+            <option value="best_deal">Best deal at dealer</option>
+            <option value="grade">Dealer grade</option>
+            <option value="listings">Most listings</option>
+          </select>
+        </label>
+        <label>Min grade
+          <select data-fld="minGrade">
+            <option value="ALL">All</option>
+            <option value="A">A only</option>
+            <option value="B">A or B</option>
+            <option value="C">A–C</option>
+          </select>
+        </label>
+        <label><input type="checkbox" data-fld="cpoOnly"> Has CPO offers</label>
+        <button class="reset" type="button" style="background:#fff;color:#b91c1c;border:1px solid #fecaca;padding:4px 10px;border-radius:4px;cursor:pointer;">Clear plan</button>
+        <span class="summary"></span>
+      </div>
+      <div id="tour-list"></div>`;
+
+    panel.querySelectorAll('[data-fld]').forEach(el => {
+      el.addEventListener('change', () => {
+        const f = el.dataset.fld;
+        state[f] = el.type === 'checkbox' ? el.checked : el.value;
+        rerender();
+      });
+    });
+    panel.querySelector('.reset').addEventListener('click', () => {
+      if (!state.planned.size || confirm('Clear all planned visits?')) {
+        state.planned.clear();
+        try { localStorage.removeItem('dealer-tour-planned'); } catch (e) {}
+        rerender();
+      }
+    });
+
+    rerender();
+    return panel;
+  }
+
   function makeTab(label, idx, isActive) {
     const t = document.createElement('button');
     t.className = 'tab' + (isActive ? ' active' : '');
@@ -1552,6 +1899,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   const dealersIdx = payload.searches.length;
   tabsEl.appendChild(makeTab(`🏪 Dealers (${(payload.dealers || []).length})`, dealersIdx, false));
   panelsEl.appendChild(buildDealersPanel(payload.dealers || [], dealersIdx));
+
+  const tourIdx = dealersIdx + 1;
+  tabsEl.appendChild(makeTab(`🗺️ Dealer Tour`, tourIdx, false));
+  panelsEl.appendChild(buildDealerTourPanel(payload.searches, payload.dealers || [], tourIdx));
 
   setupMatrixUI();
 })();
@@ -1582,6 +1933,7 @@ def write_html_report(conn: sqlite3.Connection, out_dir: str) -> None:
             "location": loc, "deal_score": score, "url": url,
             "is_cpo": bool(is_cpo),
             "source": source,
+            "seller_id": seller_id,
             "seller_name": seller_name,
             "rating": rating,
             "review_count": review_count,

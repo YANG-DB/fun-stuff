@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Used Car Pre-Purchase Checklist — BC</title>
+<script type="module" src="auth.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -23,7 +24,7 @@
   header p  { opacity: 0.85; font-size: 0.95em; }
   .top-nav {
     padding: 14px 32px; background: #f5f7fb; border-bottom: 1px solid #e5e7eb;
-    display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.9em;
+    display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.9em; align-items: center;
   }
   .top-nav a { color: #2a5298; text-decoration: none; font-weight: 500; }
   .top-nav a:hover { text-decoration: underline; }
@@ -34,18 +35,35 @@
   }
   .top-nav button:hover { background: #1e3c72; }
   .top-nav button.ghost { background: #fff; color: #2a5298; border: 1px solid #c8d2e0; }
-  main { padding: 28px 32px 40px; }
-  .intro {
-    background: #fff8e1; border-left: 4px solid #f5b400; padding: 14px 18px;
-    border-radius: 6px; margin-bottom: 28px; font-size: 0.95em; color: #5a4500;
+  .tabs {
+    display: flex; gap: 4px; padding: 16px 32px 0; background: #fff;
+    border-bottom: 2px solid #e5e7eb; flex-wrap: wrap;
   }
-  .intro strong { color: #3d2f00; }
-  section { margin-bottom: 28px; }
+  .tab {
+    background: #f1f3f7; color: #444; border: none; padding: 10px 18px;
+    border-radius: 8px 8px 0 0; cursor: pointer; font-size: 0.95em;
+    font-weight: 500; transition: all 0.15s;
+  }
+  .tab:hover { background: #e5e9f2; }
+  .tab.active { background: #2a5298; color: #fff; }
+  .progress {
+    position: sticky; top: 0; background: #fff; padding: 10px 32px;
+    border-bottom: 1px solid #e5e7eb; font-size: 0.85em; color: #555;
+    z-index: 10;
+  }
+  .bar { height: 6px; background: #eef0f3; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .bar > div { height: 100%; background: linear-gradient(90deg, #2a5298, #4caf50); width: 0; transition: width 0.2s; }
+  main { padding: 24px 32px 40px; }
+  .car-intro {
+    background: #fff8e1; border-left: 4px solid #f5b400; padding: 14px 18px;
+    border-radius: 6px; margin-bottom: 24px; font-size: 0.92em; color: #5a4500;
+  }
+  .car-intro strong { color: #3d2f00; }
+  section { margin-bottom: 24px; }
   h2 {
-    font-size: 1.2em; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb;
+    font-size: 1.18em; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb;
     margin-bottom: 12px; color: #203a43;
   }
-  h3 { font-size: 1em; color: #2a5298; margin: 14px 0 6px; font-weight: 600; }
   ul { list-style: none; margin-left: 4px; }
   li {
     display: flex; align-items: flex-start; gap: 10px;
@@ -60,238 +78,461 @@
   li label { cursor: pointer; flex: 1; }
   li.done label { text-decoration: line-through; color: #888; }
   .note { color: #666; font-size: 0.85em; font-style: italic; }
-  .hybrid {
+  .info {
     background: #e8f5e9; border-left: 4px solid #2e7d32; padding: 10px 14px;
-    border-radius: 4px; margin: 8px 0; font-size: 0.88em; color: #1b5e20;
+    border-radius: 4px; margin: 8px 0 12px; font-size: 0.88em; color: #1b5e20;
   }
   .warn {
     background: #ffebee; border-left: 4px solid #c62828; padding: 10px 14px;
-    border-radius: 4px; margin: 8px 0; font-size: 0.88em; color: #b71c1c;
+    border-radius: 4px; margin: 8px 0 12px; font-size: 0.88em; color: #b71c1c;
   }
-  .progress {
-    position: sticky; top: 0; background: #fff; padding: 10px 32px;
-    border-bottom: 1px solid #e5e7eb; font-size: 0.85em; color: #555;
-    z-index: 10;
-  }
-  .bar { height: 6px; background: #eef0f3; border-radius: 3px; overflow: hidden; margin-top: 4px; }
-  .bar > div { height: 100%; background: linear-gradient(90deg, #2a5298, #4caf50); width: 0; transition: width 0.2s; }
   @media print {
     body { background: #fff; padding: 0; color: #000; }
     .container { box-shadow: none; border-radius: 0; }
-    .top-nav, .progress { display: none; }
+    .top-nav, .progress, .tabs { display: none; }
     header { background: #fff !important; color: #000 !important; }
+    .panel:not(.active) { display: none; }
     li input[type="checkbox"] { -webkit-print-color-adjust: exact; }
   }
   @media (max-width: 700px) {
     body { padding: 8px; }
-    header, .top-nav, .progress, main { padding-left: 16px; padding-right: 16px; }
+    header, .top-nav, .tabs, .progress, main { padding-left: 16px; padding-right: 16px; }
   }
+  .panel { display: none; }
+  .panel.active { display: block; }
 </style>
 </head>
 <body>
 <div class="container">
   <header>
     <h1>🔍 Used Car Pre-Purchase Checklist</h1>
-    <p>BC-specific. Tuned for hybrids (e.g. RAV4 Hybrid) and compact SUVs (e.g. CX-5). Print, save, or use on your phone at the viewing.</p>
+    <p>BC-specific. Tabs for each car in your shortlist. Print, save, or use on your phone at the viewing.</p>
   </header>
   <div class="top-nav">
     <a href="index.html">← Back to deals</a>
+    <span class="note" id="active-car-label"></span>
     <div class="actions">
-      <button class="ghost" onclick="resetChecks()">Reset</button>
+      <button class="ghost" onclick="resetChecks()">Reset this car</button>
       <button onclick="window.print()">Print / save PDF</button>
     </div>
   </div>
+  <div class="tabs" id="tabs"></div>
   <div class="progress">
     <span><strong id="pct">0%</strong> complete · <span id="counts">0 / 0</span></span>
     <div class="bar"><div id="bar"></div></div>
   </div>
-  <main>
-    <div class="intro">
-      <strong>Why a "🔥 Hot" deal can still be bad:</strong> the price-vs-(year+km) regression doesn't see accident history, service records, owner count, trim, or rental/fleet use. If a 2-3 year old car has 100k+ km, assume fleet/rideshare unless service history proves otherwise. Use this checklist before handing over money.
-    </div>
-
-    <section>
-      <h2>1. Before you go (online, 10 min)</h2>
-      <ul>
-        <li><input type="checkbox"><label><strong>ICBC Vehicle Information Report (VIR)</strong> — $20 at <a href="https://onlineservices.icbc.com/" target="_blank" rel="noopener">icbc.com</a>. Shows BC accident claims, total-loss history, registration history. <span class="note">Most important single document.</span></label></li>
-        <li><input type="checkbox"><label><strong>CarFax Canada report</strong> — confirms out-of-province history, US imports, lien status. Often the dealer will provide this free.</label></li>
-        <li><input type="checkbox"><label><strong>Lien check (PPSA)</strong> — search at <a href="https://www.bconline.gov.bc.ca/" target="_blank" rel="noopener">bconline.gov.bc.ca</a> by VIN. If a lien exists, the seller must clear it before transfer.</label></li>
-        <li><input type="checkbox"><label><strong>Recall check</strong> — VIN at <a href="https://www.toyota.ca/recall/" target="_blank" rel="noopener">toyota.ca/recall</a> or <a href="https://www.mazda.ca/en/owners/safety-recalls/" target="_blank" rel="noopener">mazda.ca recalls</a>. Confirm any open campaigns will be done before sale.</label></li>
-        <li><input type="checkbox"><label><strong>Pre-approved financing</strong> from your bank or credit union — gives you a real rate to compare dealer financing against.</label></li>
-        <li><input type="checkbox"><label><strong>Out-the-door budget</strong>: vehicle + 12% tax (5% GST + 7% PST from a dealer, or 12% PST private), $80–$150 doc fee at dealer, $80 ICBC transfer.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>2. Documents (at the viewing)</h2>
-      <ul>
-        <li><input type="checkbox"><label><strong>VIN matches</strong> across: dashboard plate, doorjamb sticker, registration, VIR. Mismatch = walk away.</label></li>
-        <li><input type="checkbox"><label><strong>Service records</strong> — dealer stamps preferred. Confirm regular oil changes, brake fluid flush, coolant flush at intervals.</label></li>
-        <li><input type="checkbox"><label><strong>Number of previous owners</strong> — 1–2 ideal. 3+ on a 3-year-old car is a flag (rental, fleet, or rapidly resold).</label></li>
-        <li><input type="checkbox"><label><strong>Out-of-province?</strong> If yes, it needs a BC inspection certificate before registration. Quebec/Ontario cars often have winter-salt rust.</label></li>
-        <li><input type="checkbox"><label><strong>Title brand</strong>: clean / rebuilt / salvage / non-repairable. Anything but clean = walk away unless you know exactly what you're doing.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>3. Exterior walk-around</h2>
-      <ul>
-        <li><input type="checkbox"><label><strong>Panel gaps</strong> even all the way around (hood, doors, trunk). Mismatch = bodywork.</label></li>
-        <li><input type="checkbox"><label><strong>Paint match</strong> in daylight. Different shades on adjacent panels = repaint = past damage.</label></li>
-        <li><input type="checkbox"><label><strong>Overspray</strong> on rubber seals, glass edges, plastic trim, wheel wells.</label></li>
-        <li><input type="checkbox"><label><strong>Tires</strong>: matching brand, even wear, ≥4mm tread (penny test: cover Queen's crown). DOT date code on sidewall (4 digits = ww/yy) — &gt;6 yrs old = budget for new tires.</label></li>
-        <li><input type="checkbox"><label><strong>Wheel curb rash</strong>, cracked alloys (especially aggressive after potholes).</label></li>
-        <li><input type="checkbox"><label><strong>Underbody</strong>: rust on subframe / brake lines / exhaust / spring perches. Coastal BC ≠ salt-belt, but check anyway.</label></li>
-        <li><input type="checkbox"><label><strong>Glass</strong>: chips, cracks, repairs. Windshield replacement is $400–$900.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>4. Engine bay (cold start preferred)</h2>
-      <ul>
-        <li><input type="checkbox"><label><strong>Engine oil</strong>: amber → light brown OK. Black or milky = problem. Level on dipstick within range.</label></li>
-        <li><input type="checkbox"><label><strong>Coolant</strong>: clear pink / red / blue. Brown or oily = head gasket suspect.</label></li>
-        <li><input type="checkbox"><label><strong>Brake fluid</strong>: clear → light yellow OK. Dark brown = overdue flush.</label></li>
-        <li><input type="checkbox"><label><strong>Transmission fluid</strong> (where dipstick exists): bright red, no burnt smell. eCVT in hybrids has no dipstick — check service history.</label></li>
-        <li><input type="checkbox"><label><strong>Battery terminals</strong>: no corrosion. 12V battery age sticker (replace ~5 yr).</label></li>
-        <li><input type="checkbox"><label><strong>Belts &amp; hoses</strong>: no cracks, no bulges, no oil-soaked patches.</label></li>
-        <li><input type="checkbox"><label><strong>Leaks under car</strong> after it's been parked: oil (brown), coolant (pink/green), trans (red), water from AC (OK).</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>5. Hybrid-specific (RAV4 Hybrid, etc.)</h2>
-      <div class="hybrid">
-        <strong>Toyota hybrid warranty (Canada):</strong> hybrid components covered <strong>10 years / 240,000 km</strong> from in-service date (or 8 yr / 160,000 on older models). Verify in-service date — it's the warranty start, not model year.
-      </div>
-      <ul>
-        <li><input type="checkbox"><label><strong>Hybrid battery health report</strong> — ask the dealer to pull a Techstream / scan-tool block voltage report. Cells should be balanced within 0.2V.</label></li>
-        <li><input type="checkbox"><label><strong>EV-only mode works</strong>: at &lt;40 km/h with high battery, engine should stay off briefly. Listen for unusual whines.</label></li>
-        <li><input type="checkbox"><label><strong>Engine-to-EV transitions are smooth</strong> — no jerks, no lurching, no warning lights.</label></li>
-        <li><input type="checkbox"><label><strong>Regenerative braking</strong> is smooth, no grinding. (Brake pads last longer on hybrids — 80k+ km is normal.)</label></li>
-        <li><input type="checkbox"><label><strong>Inverter coolant</strong> level/condition checked (separate loop from engine on most hybrids).</label></li>
-        <li><input type="checkbox"><label><strong>No hybrid system warning lights</strong> ever appeared (ask seller, check OBD-II for stored codes).</label></li>
-        <li><input type="checkbox"><label><strong>12V auxiliary battery</strong> — small AGM that wakes the hybrid system. Costs $200–300 to replace, lasts 5–7 yr.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>6. Interior &amp; electronics</h2>
-      <ul>
-        <li><input type="checkbox"><label>All <strong>warning lights</strong> illuminate at key-on, then go out (don't accept a car with a warning still on).</label></li>
-        <li><input type="checkbox"><label><strong>AC cold</strong>, heat hot, defroster works, all fan speeds.</label></li>
-        <li><input type="checkbox"><label><strong>Heated seats</strong>, heated steering wheel, sunroof open/close/tilt.</label></li>
-        <li><input type="checkbox"><label><strong>Infotainment</strong>: CarPlay/Android Auto pairs, Bluetooth, all speakers, backup camera image clear.</label></li>
-        <li><input type="checkbox"><label><strong>All windows + locks</strong> from each switch. Power tailgate (RAV4) opens/closes both modes.</label></li>
-        <li><input type="checkbox"><label>All <strong>exterior lights</strong>: low/high beam, fog, brake (have helper), turn, reverse, plate.</label></li>
-        <li><input type="checkbox"><label><strong>Wear pattern</strong> consistent with mileage. 100k-km car with shiny new steering wheel = odometer suspect.</label></li>
-        <li><input type="checkbox"><label><strong>Smell</strong>: no mildew (water leak), no smoke, no chemical (recent detail covering odor).</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>7. Test drive (≥20 min, mixed)</h2>
-      <ul>
-        <li><input type="checkbox"><label><strong>Cold start</strong> if possible — listen for knock, blue/white smoke, rough idle.</label></li>
-        <li><input type="checkbox"><label><strong>Steering centered</strong> on a straight, level road. No pull, no vibration at 60–110 km/h.</label></li>
-        <li><input type="checkbox"><label><strong>Hard accel + hard brake</strong> in a safe spot — no shudder, no pulling, ABS engages cleanly.</label></li>
-        <li><input type="checkbox"><label><strong>Bumps &amp; potholes</strong> — no clunks, knocks, squeaks. Suspect bushings/struts if present.</label></li>
-        <li><input type="checkbox"><label><strong>AWD engages</strong> — find a loose surface (gravel shoulder), accelerate from stop, no binding/chattering.</label></li>
-        <li><input type="checkbox"><label><strong>Cruise control</strong> sets, holds, cancels.</label></li>
-        <li><input type="checkbox"><label><strong>Highway test</strong> at 100+ km/h — no vibrations (alignment / wheel balance / bent rim).</label></li>
-        <li><input type="checkbox"><label>After test drive: re-check <strong>under hood + under car</strong> for fresh leaks.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>8. Independent inspection (highly recommended)</h2>
-      <div class="warn">
-        <strong>Best $150 you'll spend.</strong> Insist on a pre-purchase inspection (PPI) at an independent shop or the brand's dealer, on a hoist. Walk away if the seller refuses — they're hiding something.
-      </div>
-      <ul>
-        <li><input type="checkbox"><label>BCAA pre-purchase inspection ($120–$160) or independent shop. <strong>Brand dealer</strong> is best for hybrids — they have the diagnostic tools.</label></li>
-        <li><input type="checkbox"><label>Inspector reports: frame straightness, suspension components, brake life remaining, tire life remaining, fluid condition, OBD codes (current + pending + history).</label></li>
-        <li><input type="checkbox"><label>For hybrids: hybrid battery cell balance + state-of-health %.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>9. Negotiation &amp; close</h2>
-      <ul>
-        <li><input type="checkbox"><label><strong>Out-the-door price</strong> in writing — vehicle + tax + doc fee + transfer. No surprises.</label></li>
-        <li><input type="checkbox"><label>Decline aftermarket extras you don't want (paint protection, fabric guard, lojack, nitrogen tires, key insurance). Most are pure margin.</label></li>
-        <li><input type="checkbox"><label><strong>Extended warranty</strong> only via OEM (Toyota Extra Care / Mazda Added Protection). Third-party warranties are often worthless.</label></li>
-        <li><input type="checkbox"><label>Use deal-score evidence — "I have 5 comparable listings priced lower per km/year, here's the data." (Show the index page.)</label></li>
-        <li><input type="checkbox"><label>For private sale: meet at <strong>seller's bank</strong> for payment / lien clearance, or use ICBC Autoplan broker for inspection &amp; transfer.</label></li>
-        <li><input type="checkbox"><label>ICBC transfer within 10 days of sale. Bring: bill of sale, transfer/tax form, ID, current insurance.</label></li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>10. Red flags that mean "walk away"</h2>
-      <div class="warn">Any one of these alone is a deal-breaker.</div>
-      <ul>
-        <li><input type="checkbox"><label>Seller refuses pre-purchase inspection, or "the shop is closed today."</label></li>
-        <li><input type="checkbox"><label>VIN doesn't match in all locations.</label></li>
-        <li><input type="checkbox"><label>Title is salvage / rebuilt / non-repairable, or has a lien the seller hasn't disclosed.</label></li>
-        <li><input type="checkbox"><label>Active warning lights, or recently-cleared OBD codes (scanner shows "monitors not ready" → someone reset codes within ~50 km).</label></li>
-        <li><input type="checkbox"><label>Engine oil is milky, or there's coolant in oil / oil in coolant.</label></li>
-        <li><input type="checkbox"><label>Hybrid battery warning has appeared, or cell voltages are imbalanced &gt;0.3V.</label></li>
-        <li><input type="checkbox"><label>Frame damage / weld evidence on subframe / underbody bent.</label></li>
-        <li><input type="checkbox"><label>"Cash only, today only, my friend wants it too" pressure tactics.</label></li>
-      </ul>
-    </section>
-
-  </main>
+  <main id="main"></main>
 </div>
 
 <script>
 (function () {
-  const STORAGE_KEY = 'car-checklist-state-v1';
-  const boxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
-  boxes.forEach((b, i) => b.dataset.idx = i);
+  // ─── shared item lists ─────────────────────────────────────────────────
+  const BEFORE_YOU_GO = [
+    'ICBC Vehicle Information Report (VIR) — $20 at <a href="https://onlineservices.icbc.com/" target="_blank" rel="noopener">icbc.com</a>. Most important single document — shows BC claims, total-loss, registration history.',
+    'CarFax Canada report — confirms out-of-province history, US imports, lien status. Dealer should provide free.',
+    'Lien check (PPSA) — search at <a href="https://www.bconline.gov.bc.ca/" target="_blank" rel="noopener">bconline.gov.bc.ca</a> by VIN. Any lien must be cleared before transfer.',
+    'Pre-approved financing from your bank or credit union — gives you a real rate to compare dealer financing against.',
+    'Out-the-door budget: vehicle + 12% tax (5% GST + 7% PST from dealer, or 12% PST private) + ~$500 doc fee at dealer + $80 ICBC transfer.',
+  ];
 
-  function save() {
-    const state = boxes.map(b => b.checked);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  const DOCS_AT_VIEWING = [
+    'VIN matches across dashboard plate, doorjamb sticker, registration, VIR. Mismatch = walk away.',
+    'Service records — dealer stamps preferred. Confirm regular intervals.',
+    'Number of previous owners — 1–2 ideal; 3+ on a 3-year-old car is a flag.',
+    'Out-of-province? Needs a BC inspection certificate before registration. Quebec/Ontario cars often have winter-salt rust.',
+    'Title brand: clean / rebuilt / salvage / non-repairable. Anything but clean = walk away.',
+  ];
+
+  const EXTERIOR = [
+    'Panel gaps even all the way around. Mismatch = bodywork.',
+    'Paint match in daylight. Different shades on adjacent panels = repaint = past damage.',
+    'Overspray on rubber seals, glass edges, plastic trim, wheel wells.',
+    'Tires: matching brand, even wear, ≥4mm tread (penny test). DOT date code on sidewall (4 digits ww/yy) — >6 yrs old = budget new tires.',
+    'Wheel curb rash, cracked alloys (pothole damage).',
+    'Underbody: rust on subframe, brake lines, exhaust, spring perches.',
+    'Glass: chips, cracks, repairs. Windshield replacement is $400–$900.',
+  ];
+
+  const INTERIOR_COMMON = [
+    'All warning lights illuminate at key-on, then go out (don\'t accept a car with a warning still on).',
+    'AC cold, heat hot, defroster works, all fan speeds.',
+    'Heated seats, heated steering wheel, sunroof open/close/tilt.',
+    'Infotainment: CarPlay/Android Auto pairs, Bluetooth, all speakers, backup camera image clear.',
+    'All windows + locks from each switch. Power tailgate (if equipped).',
+    'All exterior lights: low/high beam, fog, brake (have helper), turn, reverse, plate.',
+    'Wear pattern consistent with mileage. 100k-km car with shiny new steering wheel = odometer suspect.',
+    'Smell: no mildew (water leak), no smoke, no chemical (recent detail covering odor).',
+  ];
+
+  const INSPECTION = [
+    'BCAA pre-purchase inspection ($120–$160) or independent shop — non-negotiable on any used car with collision history.',
+    'Inspector checks: frame straightness on a hoist, suspension components, brake life remaining, tire life, fluid condition, OBD codes (current + pending + history).',
+    'For hybrids/EVs: battery cell balance + state-of-health % (requires brand-specific scan tool).',
+    'If the seller refuses inspection or says "the shop is closed today" — walk away. A confident seller welcomes outside verification.',
+  ];
+
+  const NEGOTIATION = [
+    'Out-the-door price in writing — vehicle + tax + doc fee + transfer. No surprises.',
+    'Decline aftermarket extras you don\'t want (paint protection, fabric guard, lojack, nitrogen tires, key insurance). Most are pure margin.',
+    'Extended warranty only via OEM. Third-party warranties are often worthless.',
+    'Use deal-score evidence — "I have N comparable listings priced lower per km/year, here\'s the data."',
+    'For private sale: meet at seller\'s bank for payment / lien clearance.',
+    'ICBC transfer within 10 days of sale. Bring: bill of sale, transfer/tax form, ID, current insurance.',
+  ];
+
+  const RED_FLAGS = [
+    'Seller refuses pre-purchase inspection, or "the shop is closed today."',
+    'VIN doesn\'t match in all locations.',
+    'Title is salvage / rebuilt / non-repairable, or has an undisclosed lien.',
+    'Active warning lights, or recently-cleared OBD codes (scanner shows "monitors not ready" → someone reset codes within ~50 km).',
+    'Frame damage / weld evidence on subframe / underbody bent.',
+    '"Cash only, today only, my friend wants it too" pressure tactics.',
+  ];
+
+  // ─── car-specific content ─────────────────────────────────────────────
+  const CARS = [
+    {
+      key: 'mazda-cx-5',
+      tabLabel: '🚗 Mazda CX-5',
+      title: 'Mazda CX-5 (gas, AWD)',
+      intro: `<strong>Why you\'re looking at this:</strong> learner-friendly compact SUV, solid resale, simple ICE drivetrain (no hybrid complications), AWD for BC winters. Skyactiv-G 2.5L is reliable but has a few known issues — see Engine section below.<br><strong>Warranty:</strong> Mazda 3 yr / 80,000 km basic + 5 yr / 100,000 km powertrain. Mazda CPO adds 7 yr / 140,000 km powertrain extension from original sale date.`,
+      engineTitle: 'Engine bay (cold start preferred) — Mazda Skyactiv 2.5L',
+      engineItems: [
+        'Engine oil: amber → light brown OK. Black or milky = problem.',
+        '<strong>Oil level on dipstick within range</strong> — pre-2020 Skyactiv had oil-dilution complaints (cylinder wash from fuel). Trust higher-than-MAX = pull dipstick, smell for fuel.',
+        'Coolant: clear pink/red/blue. Brown or oily = head gasket suspect.',
+        'Brake fluid: clear → light yellow OK. Dark brown = overdue flush.',
+        '<strong>Spark plugs replaced at 60k km</strong>? Direct-injection engine fouls faster.',
+        'Belts &amp; hoses: no cracks, no bulges, no oil-soaked patches.',
+        'Battery terminals: no corrosion. 12V battery age (~5 yr).',
+        'Leaks under car: oil (brown), coolant (pink/green), trans (red), water from AC (OK).',
+        'Exhaust: no rust holes, no rattles. Listen for hangers.',
+      ],
+      mazdaQuirks: {
+        title: 'Mazda CX-5 specific items',
+        items: [
+          '<strong>Hood paint chipping</strong> — Mazda\'s Soul Red Crystal &amp; Snowflake White Pearl are known to chip on the leading edge of the hood. Check carefully.',
+          'Infotainment generation: 2017–2020 used the slower "Mazda Connect" rotary knob system. 2021+ refreshed. Test CarPlay / Android Auto responsiveness.',
+          '<strong>i-ACTIV AWD engagement</strong>: accelerate from stop on loose surface (gravel shoulder). No binding, chattering, or driveline shudder.',
+          'Rear hatch struts hold open at full height (especially in cold weather).',
+          'Rear seat folds 40-20-40 — verify all latches.',
+          'Has a real spare? Or just a repair kit?',
+        ],
+      },
+      testDriveItems: [
+        'Cold start if possible — listen for knock, blue/white smoke, rough idle.',
+        'Steering centered on a straight, level road. No pull, no vibration at 60–110 km/h.',
+        'Hard accel + hard brake in a safe spot — no shudder, no pulling, ABS engages cleanly.',
+        'Bumps &amp; potholes — no clunks, knocks, squeaks. Suspect bushings/struts if present.',
+        '<strong>AWD engages</strong> — loose surface, accel from stop, no binding/chattering.',
+        'Cruise control sets, holds, cancels.',
+        'Highway test at 100+ km/h — no vibrations (alignment / wheel balance / bent rim).',
+        'After test drive: re-check under hood + under car for fresh leaks.',
+      ],
+    },
+    {
+      key: 'rav4-hybrid',
+      tabLabel: '🌿 RAV4 Hybrid',
+      title: 'Toyota RAV4 Hybrid',
+      intro: `<strong>Why you\'re looking at this:</strong> family-friendly compact SUV, AWD, fuel-efficient hybrid powertrain, Toyota reliability, strong resale. Best-in-class hybrid coverage in Canada.<br><strong>Warranty:</strong> Toyota 3 yr / 60,000 km basic + 5 yr / 100,000 km powertrain. <strong>Hybrid components covered 10 yr / 240,000 km</strong> in Canada from in-service date. Toyota Certified Used (TCU) adds 7 yr / 160,000 km powertrain extension.`,
+      engineTitle: 'Engine bay (cold start preferred) — 2.5L Atkinson + hybrid',
+      engineItems: [
+        'Engine oil: amber → light brown OK. Black or milky = problem.',
+        'Coolant: clear pink/red/blue. <strong>Two cooling loops</strong> — engine + inverter — check both reservoirs.',
+        'Brake fluid: clear → light yellow OK. Brake pads last 80k+ km on hybrids (regen).',
+        'eCVT has no dipstick — check service history for transmission fluid change at 100k km.',
+        'Battery terminals: no corrosion. 12V auxiliary battery (small AGM, ~$200–300, lasts 5–7 yr).',
+        'Belts &amp; hoses: hybrid system uses electric AC compressor — fewer belts than ICE.',
+        'Leaks under car: oil (brown), coolant (pink/green), water from AC (OK).',
+        '<strong>Driver-side carpet dryness check</strong> — known water-leak issue on 2019–2021 RAV4 (under driver footwell).',
+      ],
+      hybridSection: {
+        title: 'Hybrid-specific checks',
+        intro: '<strong>Toyota hybrid warranty (Canada):</strong> hybrid components covered <strong>10 yr / 240,000 km</strong> from in-service date. Verify in-service date — it\'s the warranty start, not model year.',
+        items: [
+          '<strong>Hybrid battery health report</strong> — ask the dealer for a Techstream scan-tool block-voltage report. Cells should be balanced within 0.2V.',
+          'EV-only mode works: at &lt;40 km/h with high battery, engine should stay off briefly.',
+          'Engine-to-EV transitions smooth — no jerks, no lurching, no warning lights.',
+          'Regenerative braking smooth, no grinding.',
+          '<strong>AWD shudder check</strong> — RAV4 Hybrid AWD is engine-driven front + electric-driven rear. On cold start, drive a few blocks at 30–50 km/h. No driveline shudder under light throttle.',
+          'No hybrid system warning lights ever appeared (ask, then verify with OBD-II).',
+          '<strong>2019–2021 fuel tank recall (PFP)</strong> — verify completed. Toyota replaced fuel pumps that could fail and stall the engine.',
+        ],
+      },
+      testDriveItems: [
+        'Cold start — engine should turn on briefly for warm-up, then car can move on EV alone.',
+        'Steering centered on a straight, level road. No pull, no vibration at 60–110 km/h.',
+        'Hard accel — hybrid system should respond instantly. No hesitation, no engine lag.',
+        'Bumps &amp; potholes — no clunks. Hybrid models heavier than gas, suspension wears faster.',
+        'AWD engages on loose surface.',
+        'Cruise control sets, holds, cancels. Dynamic radar cruise (TSS) follows traffic.',
+        'Highway test at 100+ km/h — engine running continuously, no surging.',
+        'After test drive: re-check under hood + under car for fresh leaks.',
+      ],
+    },
+    {
+      key: 'corolla-hybrid',
+      tabLabel: '🍃 Corolla Hybrid',
+      title: 'Toyota Corolla Hybrid',
+      intro: `<strong>Why you\'re looking at this:</strong> learner-driver friendly (gentle acceleration), best-in-class fuel economy for town driving (~4.5 L/100km), Toyota\'s most reliable powertrain, cheapest ICBC insurance tier, exceptional resale. Most are FWD; AWD (E-Four) only on 2023+ premium trims and very rare.<br><strong>Warranty:</strong> Toyota 3 yr / 60,000 km basic + 5 yr / 100,000 km powertrain. <strong>Hybrid components 10 yr / 240,000 km in Canada</strong>. TCU adds 7 yr / 160,000 km powertrain.`,
+      engineTitle: 'Engine bay (cold start preferred) — 1.8L Atkinson + hybrid',
+      engineItems: [
+        'Engine oil: amber → light brown OK. Black or milky = problem.',
+        'Coolant: clear pink/red/blue. <strong>Two loops</strong> — engine + inverter — check both.',
+        'Brake fluid: clear → light yellow OK. Pads last 80k+ km on hybrids (regen).',
+        'eCVT has no dipstick — check service history.',
+        '12V auxiliary battery age (small AGM, ~$200–300, lasts 5–7 yr).',
+        'Belts &amp; hoses minimal — electric AC compressor.',
+        'Leaks under car: oil, coolant, water from AC (OK).',
+      ],
+      hybridSection: {
+        title: 'Hybrid-specific checks',
+        intro: '<strong>Smaller hybrid pack than RAV4</strong> (about half the kWh) but same 10 yr / 240,000 km Canadian warranty coverage. Powertrain has fewer service touch-points than gas-only Corolla.',
+        items: [
+          'Hybrid battery health report — Techstream block-voltage check. Cells balanced within 0.2V.',
+          'EV-only mode works at low speeds. Engine should stay off when battery has charge.',
+          'Engine-to-EV transitions smooth.',
+          'Regenerative braking smooth, no grinding.',
+          'No hybrid system warning lights ever appeared.',
+          '<strong>80,000 km major service done?</strong> Spark plugs, brake fluid flush, CVT fluid inspect.',
+          'If 2023+ E-Four AWD model: rear motor engages on accel from stop on loose surface.',
+        ],
+      },
+      testDriveItems: [
+        'Cold start — engine fires briefly for warm-up.',
+        'Steering centered on straight road. No pull.',
+        'Light acceleration is gentle — perfect for a learner. Note this vs Tesla\'s instant torque.',
+        'Hard accel — 0-100 in ~10.5s. Not a sports car, but enough for highway merging.',
+        'Bumps — no clunks. Corolla suspension is simple, durable.',
+        'Cruise control + dynamic radar cruise (TSS).',
+        'Highway: engine runs continuously. No surging. ~5.5 L/100km expected.',
+        'After test drive: re-check for fresh leaks.',
+      ],
+      extraNote: {
+        type: 'info',
+        text: '<strong>Why this is the simplest learner choice:</strong> traditional gauges + touchscreen (not touchscreen-only), gentle predictable throttle, mechanical brakes that work even if hybrid system has a fault, ICBC cheapest tier, and you\'ll get ~78% of purchase price back if you sell after 3 years.',
+      },
+    },
+    {
+      key: 'prius-prime',
+      tabLabel: '🔌 Prius Prime',
+      title: 'Toyota Prius Prime (PHEV)',
+      intro: `<strong>Why you\'re looking at this:</strong> Plug-in hybrid with ~72 km EV-only range plus hybrid fallback. Lowest town fuel cost of anything in your shortlist <em>if</em> you can plug in nightly. Falls back to standard hybrid (~5 L/100km) if not plugged in. Toyota reliability, strong resale.<br><strong>Critical pre-requisite:</strong> you need at least a 110V outlet near where you park overnight. Without it, the Prime\'s value advantage over the regular Prius Hybrid evaporates.<br><strong>Warranty:</strong> Toyota 3 yr / 60,000 km basic + 5 yr / 100,000 km powertrain. <strong>Plug-in EV traction battery 8 yr / 160,000 km</strong> with 70% capacity floor. Hybrid components 10 yr / 240,000 km in Canada. Toyota CPO adds 7 yr / 160,000 km powertrain.`,
+      engineTitle: 'Engine bay + charging system',
+      engineItems: [
+        'Engine oil: amber → light brown OK. Black or milky = problem.',
+        'Coolant: clear pink/red/blue. <strong>Three cooling loops on Prime</strong> — engine, inverter, HV battery (more complex than standard Prius). Check all reservoirs.',
+        'Brake fluid: clear → light yellow. Pads last 80k+ km (regen does the work).',
+        'eCVT has no dipstick — verify in service records.',
+        '<strong>12V auxiliary battery</strong>: if the CarFax shows a premature replacement (e.g. before 5 yr / 80k km), ask why. Confirm new battery is healthy and charging system isn\'t draining it.',
+        'Belts &amp; hoses: electric AC compressor — fewer belts than ICE.',
+        '<strong>Leaks under car</strong>: oil, coolant — Prime has extra cooling lines for the HV battery. Inspect the inverter cooling pump area.',
+        '<strong>Charge port flap + latch</strong>: open and close cleanly, no broken hinge, latch holds the cable firmly when plugged in.',
+      ],
+      hybridSection: {
+        title: 'Plug-in EV battery + charging tests',
+        intro: '<strong>This is what makes the Prime worth its $4-7k premium over a standard Prius Hybrid.</strong> The 13.6 kWh traction battery + plug-in capability need to actually work — verify before signing.',
+        items: [
+          '<strong>Plug in the Level 1 (110V) mobile cable</strong> at the dealer if possible. Confirm it negotiates and starts charging (~12A on the dashboard).',
+          'If a Level 2 (240V) J1772 charger is available on-site, plug in there too. Confirms the full charge-port functionality.',
+          '<strong>Displayed EV range at full charge</strong>: 2024 Prime SE EPA spec is <strong>72 km</strong>. &lt;65 km on full charge = battery degradation worth investigating.',
+          '<strong>HV battery health report</strong> — ask dealer for Techstream block-voltage data. Cells balanced within 0.2V.',
+          'EV-only mode works: at &lt;40 km/h with charge in pack, engine should stay off entirely.',
+          'Engine ↔ EV transitions smooth, no jerks or warning lights.',
+          'Regenerative braking smooth, no grinding.',
+          '<strong>OEM mobile charge cable included</strong> — ~$500 to replace aftermarket. Push back if missing.',
+          '<strong>Open recall CANRL6</strong> (2023–2026 Prius / Prius Prime rear-door switch water-ingress) — Toyota is preparing parts. Get a written commitment from the dealer to complete the recall once parts arrive.',
+          '<strong>Plug-in charging history</strong>: ask how often the previous owner plugged in. Heavy plug-in users have less engine wear (engine ran less); rare plug-in users mean the Prime was used as a regular hybrid — gas engine has more cycles.',
+        ],
+      },
+      testDriveItems: [
+        'Cold start — engine should stay off if battery has charge. If depleted, engine briefly runs for warm-up.',
+        'Steering centered on straight road. No pull at 60–110 km/h.',
+        '<strong>Prime accel is quicker than expected</strong> — 0-100 in ~6.7s (faster than Corolla Hybrid, slower than Tesla). Electric motor adds boost. Use ECON mode for the learner driver.',
+        'Lift off accelerator in EV mode → strong regen deceleration. Learner needs to be comfortable with this.',
+        'Hard accel + hard brake — system blends EV regen + mechanical brake smoothly.',
+        'Bumps &amp; potholes — Prime is heavier than standard Prius (battery weight). Suspension should still be quiet.',
+        'Test all drive modes: EV, Auto/EV (default), HV, Power, Eco.',
+        '<strong>Heat pump AC + heater</strong> work in both EV and hybrid modes. Heat pump is more efficient than resistive heating in BC winters — preserves EV range.',
+        'Cruise control + dynamic radar cruise (TSS 3.0).',
+        'After test drive: re-check under hood + under car for fresh leaks.',
+      ],
+      extraNote: {
+        type: 'warn',
+        text: '<strong>If you can\'t plug in at home, buy a regular Prius Hybrid instead.</strong> Without plug-in access, the Prime burns the same gas as a Prius Hybrid (~5 L/100km), but you paid an extra $4-7k for a 13.6 kWh battery that\'s now dead weight. The Prime\'s entire value rests on overnight charging — confirm you have at least a 110V outlet near where you\'ll park before committing.',
+      },
+    },
+    {
+      key: 'tesla-model-3',
+      tabLabel: '⚡ Tesla Model 3',
+      title: 'Tesla Model 3 (EV)',
+      intro: `<strong>Why you\'re considering this:</strong> low running cost (electricity ~$2/100km), minimal maintenance, top safety scores. <strong>Cautions for this purchase</strong>: insurance is 30–40% higher than Corolla in BC, bodywork is expensive ($5–10k for parking dings), used resale has dropped ~30% since 2023, and the throttle response is steep for a learner driver (use Chill mode).<br><strong>Warranty:</strong> Tesla 4 yr / 80,000 km basic + 8 yr / 160,000 km on battery + drive unit (Model 3 SR/SR+/Long Range) with a minimum 70% capacity retention guarantee. <strong>No CPO program in Canada</strong> — used Teslas sold by Tesla come with a 1 yr / 20,000 km limited used-vehicle warranty.`,
+      engineTitle: 'Battery + drive unit + charging',
+      engineItems: [
+        '<strong>Battery State of Health (SoH)</strong> — ask the seller to charge to 100% in your presence, note the projected range. Compare to original EPA range for that variant/year. &lt;85% of original is a flag. &lt;70% triggers Tesla\'s capacity warranty (if still in 8 yr / 160 km window).',
+        '<strong>Cell balance</strong> — accessible via Service Mode (Tesla diagnostic). Ask the seller for a screenshot, or the next-best: at 100% charge, projected range that\'s much lower than expected = imbalanced cells or degraded modules.',
+        '<strong>DC fast-charging works</strong> — test at a Supercharger if possible. Older units may have throttled fast-charging.',
+        '<strong>Level 2 home charging</strong> — mobile connector included? Wall connector functional? Adapter for J1772 (other networks)?',
+        '<strong>Charge port</strong>: door opens cleanly, latch holds, no visible damage on pins.',
+        '<strong>Phantom drain</strong> — park overnight, note % loss. &lt;2% is normal. Higher = something staying awake.',
+        '<strong>12V auxiliary battery</strong> — also exists on Tesla (was lead-acid, Li-ion on newer Refresh). Replace ~3 yr (sooner than ICE cars).',
+        '<strong>HV battery cooling</strong> — listen for the coolant pump when stopped after a drive. No grinding/whining.',
+      ],
+      hybridSection: {
+        title: 'Tesla-specific tech checks',
+        intro: '<strong>MCU generation matters.</strong> 2017–early 2020 Model 3s shipped with MCU1 (Intel Atom, eMMC flash known to fail). Refresh MCU2 (2020+) is much better. Affects touchscreen responsiveness and app support. Check via Software → "Hardware" section.',
+        items: [
+          '<strong>Touchscreen MCU2 or later</strong> — verify in vehicle Software info. Mid-2020+ Model 3 has MCU2.',
+          '<strong>Touchscreen responsiveness</strong>: open settings, dive in/out of menus. Lag or stuttering = MCU eMMC issue.',
+          'All 8 cameras working — open Sentry Mode preview, check each angle.',
+          'Sentry/Dashcam — USB stick installed? Otherwise plug one in and verify recording works.',
+          '<strong>Autopilot tier</strong>: Basic Autopilot (standard 2019+) vs Enhanced Autopilot vs Full Self-Driving. Verify what\'s active in the car\'s software. <strong>FSD does not always transfer to a new owner</strong> — confirm with Tesla using the VIN.',
+          '<strong>Premium Connectivity</strong>: included free first year on new sale, then $9.99/mo. Status in account.',
+          '<strong>Door handles</strong>: external motorized handles work cleanly. Internal manual release works (especially rear — train passengers).',
+          '<strong>Frunk + trunk</strong>: open, close, latch firmly. Frunk hood has hinge wear point.',
+          'No spare tire — only a tire repair kit. Check it\'s present and unused.',
+          '<strong>Suspension</strong>: 2017–2020 had a recall on lower control arms — confirm completed (check VIN against Tesla\'s recall site).',
+          'No engine bay smell — but check frunk drain holes (clogs cause water in frunk).',
+        ],
+      },
+      testDriveItems: [
+        '<strong>Set vehicle to Chill mode</strong> for the test drive — gives a more representative learner-driver experience.',
+        'Steering centered on straight road. Tesla\'s steering is light by default — try Standard and Sport in Settings.',
+        'Gentle accel — instant torque means smoother than ICE but unfamiliar. <strong>This is the dealbreaker check for a new driver</strong>.',
+        '<strong>Single-pedal regen</strong>: lift off accelerator → strong deceleration. Verify it\'s smooth, predictable. If the new driver will be on this car, ensure they\'re comfortable with regen behavior — it rewires brake habits.',
+        'Hard accel in safe spot — note the urgency. Even Chill mode is quicker than most ICE cars.',
+        'Hard brake — pads do little work; regen + mechanical blend should be smooth.',
+        'Bumps — Tesla suspension is firmer than expected. Some bushings wear by 100k km.',
+        'Cruise control / Autopilot — engage on highway, verify lane keeping is reasonable. Note: Autopilot has limits in rain/snow.',
+        'Highway: no surging, no battery warnings. AC on full → minimal range hit but should hold.',
+        'After test drive: check tire wear (rear tires wear fast on RWD Standard Range models).',
+      ],
+      extraNote: {
+        type: 'warn',
+        text: '<strong>Before committing to Tesla, double-check your insurance quote.</strong> Call ICBC or your broker with the VIN of the specific car. Premiums for a Model 3 in BC are typically $600–900/yr higher than a Corolla Hybrid. Over 5 years that\'s $3,000–4,500 — meaningful against the fuel savings.',
+      },
+    },
+  ];
+
+  // ─── rendering ─────────────────────────────────────────────────────────
+  const tabsEl  = document.getElementById('tabs');
+  const mainEl  = document.getElementById('main');
+  const labelEl = document.getElementById('active-car-label');
+  const STORAGE = 'car-checklist-state-v2';
+
+  // State: { [carKey]: [bool, bool, ...] }
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(STORAGE) || '{}') || {}; } catch (e) {}
+
+  let activeKey = CARS[0].key;
+
+  function sectionHtml(title, items, intro) {
+    const introHtml = intro ? `<div class="info">${intro}</div>` : '';
+    const rows = items.map(it => `<li><input type="checkbox"><label>${it}</label></li>`).join('');
+    return `<section><h2>${title}</h2>${introHtml}<ul>${rows}</ul></section>`;
   }
-  function load() {
-    try {
-      const state = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      boxes.forEach((b, i) => { if (state[i]) b.checked = true; });
-    } catch (e) {}
+
+  function buildPanel(car) {
+    const parts = [];
+    parts.push(`<div class="car-intro">${car.intro}</div>`);
+    parts.push(sectionHtml('1. Before you go (online, 10 min)', BEFORE_YOU_GO));
+    parts.push(sectionHtml('2. Documents (at the viewing)', DOCS_AT_VIEWING));
+    parts.push(sectionHtml('3. Exterior walk-around', EXTERIOR));
+    parts.push(sectionHtml('4. ' + car.engineTitle, car.engineItems));
+    if (car.hybridSection) {
+      parts.push(sectionHtml('5. ' + car.hybridSection.title, car.hybridSection.items, car.hybridSection.intro));
+    }
+    if (car.mazdaQuirks) {
+      parts.push(sectionHtml('5. ' + car.mazdaQuirks.title, car.mazdaQuirks.items));
+    }
+    const nextIdx = (car.hybridSection || car.mazdaQuirks) ? 6 : 5;
+    parts.push(sectionHtml(nextIdx + '. Interior & electronics', INTERIOR_COMMON));
+    parts.push(sectionHtml((nextIdx + 1) + '. Test drive (≥20 min, mixed)', car.testDriveItems));
+    parts.push(sectionHtml((nextIdx + 2) + '. Independent inspection', INSPECTION));
+    parts.push(sectionHtml((nextIdx + 3) + '. Negotiation & close', NEGOTIATION));
+    parts.push(`<section><h2>${nextIdx + 4}. Red flags — walk away</h2><div class="warn">Any one of these alone is a deal-breaker.</div><ul>${
+      RED_FLAGS.map(it => `<li><input type="checkbox"><label>${it}</label></li>`).join('')
+    }</ul></section>`);
+    if (car.extraNote) {
+      const cls = car.extraNote.type === 'warn' ? 'warn' : 'info';
+      parts.push(`<section><div class="${cls}">${car.extraNote.text}</div></section>`);
+    }
+    return parts.join('');
   }
-  function update() {
+
+  function renderTabs() {
+    tabsEl.innerHTML = CARS.map(c =>
+      `<button class="tab${c.key === activeKey ? ' active' : ''}" data-key="${c.key}">${c.tabLabel}</button>`
+    ).join('');
+    tabsEl.querySelectorAll('.tab').forEach(t => {
+      t.addEventListener('click', () => switchTo(t.dataset.key));
+    });
+  }
+
+  function renderPanel() {
+    const car = CARS.find(c => c.key === activeKey);
+    mainEl.innerHTML = `<div class="panel active" data-car="${car.key}">${buildPanel(car)}</div>`;
+    labelEl.textContent = '· Active car: ' + car.title;
+
+    const boxes = mainEl.querySelectorAll('input[type="checkbox"]');
+    const saved = state[car.key] || [];
+    boxes.forEach((b, i) => {
+      if (saved[i]) b.checked = true;
+      b.addEventListener('change', () => { onCheck(boxes); });
+    });
+    mainEl.querySelectorAll('li').forEach(li => {
+      const cb = li.querySelector('input');
+      const lbl = li.querySelector('label');
+      if (cb && lbl) lbl.addEventListener('click', e => {
+        if (e.target.tagName === 'A') return;
+        e.preventDefault();
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change'));
+      });
+    });
+    updateProgress(boxes);
+  }
+
+  function onCheck(boxes) {
+    const arr = Array.from(boxes).map(b => b.checked);
+    state[activeKey] = arr;
+    try { localStorage.setItem(STORAGE, JSON.stringify(state)); } catch (e) {}
+    updateProgress(boxes);
+  }
+
+  function updateProgress(boxes) {
     const total = boxes.length;
-    const done = boxes.filter(b => b.checked).length;
+    const done  = Array.from(boxes).filter(b => b.checked).length;
     const pct = total ? Math.round(done / total * 100) : 0;
     document.getElementById('pct').textContent = pct + '%';
     document.getElementById('counts').textContent = done + ' / ' + total;
     document.getElementById('bar').style.width = pct + '%';
     boxes.forEach(b => b.closest('li').classList.toggle('done', b.checked));
   }
-  boxes.forEach(b => b.addEventListener('change', () => { save(); update(); }));
 
-  // make label tap toggle the box
-  document.querySelectorAll('li').forEach(li => {
-    const cb = li.querySelector('input');
-    const lbl = li.querySelector('label');
-    if (cb && lbl) lbl.addEventListener('click', e => {
-      // anchor links inside label should still work
-      if (e.target.tagName === 'A') return;
-      e.preventDefault();
-      cb.checked = !cb.checked;
-      cb.dispatchEvent(new Event('change'));
-    });
-  });
+  function switchTo(key) {
+    activeKey = key;
+    try { localStorage.setItem(STORAGE + ':active', key); } catch (e) {}
+    renderTabs();
+    renderPanel();
+  }
 
   window.resetChecks = function () {
-    if (!confirm('Clear all checks?')) return;
-    boxes.forEach(b => b.checked = false);
-    save(); update();
+    const car = CARS.find(c => c.key === activeKey);
+    if (!confirm(`Clear all checks for ${car.title}?`)) return;
+    delete state[activeKey];
+    try { localStorage.setItem(STORAGE, JSON.stringify(state)); } catch (e) {}
+    renderPanel();
   };
 
-  load(); update();
+  // restore last active tab
+  try {
+    const last = localStorage.getItem(STORAGE + ':active');
+    if (last && CARS.some(c => c.key === last)) activeKey = last;
+  } catch (e) {}
+
+  renderTabs();
+  renderPanel();
 })();
 </script>
 </body>

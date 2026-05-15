@@ -61,5 +61,8 @@ deals_report.md
 __pycache__/
 *.pyc
 
+# Firebase local state
+.firebase/
+
 # Local Claude config
 .claude/
