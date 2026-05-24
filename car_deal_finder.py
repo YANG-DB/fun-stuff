@@ -885,7 +885,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BC Used Car Deal Finder</title>
-<script type="module" src="auth.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -1176,6 +1175,182 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .export-btn:hover:not(:disabled) { background: #eef2f7; }
   .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .compare-toggle {
+    background: #fff; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 12px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 600;
+  }
+  .compare-toggle:hover:not(:disabled) { background: #eef2f7; }
+  .compare-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+  .compare-toggle.has-items { background: #fef3c7; color: #78350f; border-color: #fde68a; }
+  /* per-row action buttons */
+  .ai-btn, .compare-btn {
+    background: none; border: 1px solid #c8d2e0; color: #6b7280;
+    padding: 2px 7px; border-radius: 5px; cursor: pointer;
+    font-size: 0.95em; margin-left: 4px; vertical-align: middle;
+    font-family: inherit;
+  }
+  .ai-btn { color: #7c3aed; border-color: #ddd6fe; }
+  .ai-btn:hover { background: #f5f3ff; }
+  .compare-btn:hover { background: #eef2f7; }
+  .compare-btn.selected {
+    background: #fef3c7; color: #78350f; border-color: #fde68a; font-weight: 600;
+  }
+  input.cmp-cb {
+    width: 18px; height: 18px; vertical-align: middle;
+    accent-color: #2a5298; cursor: pointer; margin-left: 4px;
+  }
+  input.cmp-cb:disabled { opacity: 0.3; cursor: not-allowed; }
+  /* Compare panel */
+  .compare-table {
+    width: 100%; border-collapse: collapse; font-size: 0.88em;
+    background: #fff; border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .compare-table th, .compare-table td {
+    padding: 8px 12px; border-bottom: 1px solid #f1f3f7;
+    vertical-align: top;
+  }
+  .compare-table tbody tr td:first-child {
+    font-weight: 600; color: #4b5563; width: 140px;
+    background: #fafbfd; white-space: nowrap;
+  }
+  .compare-table thead th {
+    background: #f5f7fb; font-weight: 600; color: #1f2937;
+    border-bottom: 2px solid #e5e7eb;
+  }
+  .compare-table .car-col { min-width: 200px; }
+  .compare-remove {
+    background: #fff; border: 1px solid #fecaca; color: #b91c1c;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer;
+    font-size: 0.82em; font-weight: 500;
+  }
+  .compare-remove:hover { background: #fee2e2; }
+  .compare-actions {
+    display: flex; gap: 10px; align-items: center; margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .compare-actions .primary {
+    background: #7c3aed; color: #fff; border: 1px solid #7c3aed;
+    padding: 8px 16px; border-radius: 6px; cursor: pointer;
+    font-size: 0.93em; font-weight: 600;
+  }
+  .compare-actions .primary:hover { background: #6d28d9; }
+  .compare-actions .primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .compare-actions .ghost {
+    background: #fff; color: #6b7280; border: 1px solid #c8d2e0;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em;
+  }
+  .compare-actions .ghost:hover { background: #f5f7fb; }
+  /* Re-scrape button + progress overlay */
+  .rescrape-btn {
+    background: #fff; border: 1px solid #c8d2e0; color: #2a5298;
+    padding: 4px 12px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88em; font-weight: 600;
+  }
+  .rescrape-btn:hover:not(:disabled) { background: #eef2f7; }
+  .rescrape-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .rescrape-btn.hidden { display: none; }
+  #scrape-overlay {
+    position: fixed; inset: 0; z-index: 9000;
+    background: rgba(15, 32, 39, 0.55); padding: 30px 20px;
+    display: none; align-items: flex-start; justify-content: center; overflow-y: auto;
+  }
+  #scrape-overlay.open { display: flex; }
+  .scrape-modal {
+    background: #fff; border-radius: 12px; padding: 24px 28px;
+    width: 100%; max-width: 720px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.3);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .scrape-modal h3 { font-size: 1.2em; margin-bottom: 4px; color: #0f2027; }
+  .scrape-modal .hint { color: #6b7280; font-size: 0.88em; margin-bottom: 16px; }
+  .scrape-bar-wrap {
+    height: 10px; background: #eef0f3; border-radius: 5px;
+    overflow: hidden; margin-bottom: 8px;
+  }
+  .scrape-bar-fill {
+    height: 100%; background: linear-gradient(90deg, #2a5298, #4caf50);
+    width: 0; transition: width 0.4s ease;
+  }
+  .scrape-summary {
+    display: flex; justify-content: space-between; font-size: 0.85em;
+    color: #4b5563; margin-bottom: 16px;
+  }
+  .scrape-steps {
+    margin-bottom: 16px; max-height: 320px; overflow-y: auto;
+    border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px;
+  }
+  .scrape-step {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 8px; font-size: 0.88em; border-radius: 4px;
+  }
+  .scrape-step.running { background: #eff6ff; }
+  .scrape-step.ok      { background: #f0fdf4; }
+  .scrape-step.blocked { background: #fef3c7; }
+  .scrape-step.error   { background: #fee2e2; }
+  .scrape-step .ico { width: 22px; text-align: center; font-size: 1em; }
+  .scrape-step .label { flex: 1; color: #1f2937; }
+  .scrape-step .count { color: #6b7280; font-size: 0.82em; }
+  .scrape-step.pending { opacity: 0.55; }
+  .scrape-step.running .ico { animation: scrape-spin 1.2s linear infinite; display: inline-block; }
+  @keyframes scrape-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+  .scrape-log-wrap {
+    margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 6px;
+    background: #fafbfd;
+  }
+  .scrape-log-wrap summary {
+    padding: 8px 12px; cursor: pointer; color: #4b5563;
+    font-size: 0.85em; font-weight: 500;
+  }
+  .scrape-log-wrap pre {
+    margin: 0; padding: 8px 14px 14px; max-height: 200px; overflow: auto;
+    font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 0.78em; color: #1f2937; line-height: 1.4;
+    background: #fff; border-top: 1px solid #e5e7eb;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .scrape-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px;
+  }
+  .scrape-actions button {
+    padding: 8px 18px; border-radius: 6px; cursor: pointer;
+    font-size: 0.92em; font-weight: 500;
+    border: 1px solid #c8d2e0; background: #fff; font-family: inherit;
+  }
+  .scrape-actions .primary {
+    background: #2a5298; color: #fff; border-color: #2a5298;
+  }
+  .scrape-actions .primary:hover:not(:disabled) { background: #1e3c72; }
+  .scrape-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* File attachments in note modal */
+  .upload-zone {
+    margin-top: 14px; padding: 14px; border: 2px dashed #c8d2e0;
+    border-radius: 8px; text-align: center; color: #6b7280;
+    font-size: 0.85em; cursor: pointer; background: #fafbfd;
+  }
+  .upload-zone.drag-over { border-color: #2a5298; background: #eff6ff; color: #2a5298; }
+  .upload-zone input[type=file] { display: none; }
+  .file-list { margin-top: 10px; }
+  .file-list:empty { display: none; }
+  .file-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    background: #f5f7fb; border-radius: 6px; margin-bottom: 4px;
+    font-size: 0.85em;
+  }
+  .file-row .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row .file-size { color: #6b7280; font-size: 0.78em; white-space: nowrap; }
+  .file-row .file-actions { display: flex; gap: 4px; }
+  .file-row .file-actions button {
+    background: none; border: 1px solid #c8d2e0; padding: 2px 8px;
+    border-radius: 4px; cursor: pointer; font-size: 0.85em; font-weight: 500;
+    font-family: inherit;
+  }
+  .file-row .file-actions .dl { color: #2a5298; }
+  .file-row .file-actions .dl:hover { background: #eff6ff; }
+  .file-row .file-actions .del { color: #b91c1c; border-color: #fecaca; }
+  .file-row .file-actions .del:hover { background: #fee2e2; }
   .total-cell {
     white-space: nowrap; position: relative; cursor: help;
     border-bottom: 1px dotted #999; display: inline-block;
@@ -1246,7 +1421,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="meta">
     <span>Total listings: <strong id="total">—</strong></span>
     <span>Dealers: <strong id="dealer-count">—</strong></span>
+    <button class="rescrape-btn hidden" id="rescrape-btn" title="Re-run the scraper (requires car_finder_server.py running locally)">🔄 Re-scrape</button>
     <button class="export-btn" id="export-md" disabled>📋 Export notes (0)</button>
+    <button class="compare-toggle" id="compare-toggle" disabled>⚖ Compare (0)</button>
     <button class="matrix-toggle" id="matrix-toggle">🎯 Customize match score: OFF</button>
   </div>
   <div class="matrix-panel" id="matrix-panel">
@@ -1263,14 +1440,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div id="panels"></div>
 </div>
 
+<div id="scrape-overlay" role="dialog" aria-modal="true">
+  <div class="scrape-modal">
+    <h3>🔄 Re-scraping listings…</h3>
+    <div class="hint" id="scrape-hint">Chromium will open. Solve any CAPTCHAs if they appear. Page will refresh when done.</div>
+    <div class="scrape-bar-wrap"><div class="scrape-bar-fill" id="scrape-bar-fill"></div></div>
+    <div class="scrape-summary">
+      <span id="scrape-progress-text">starting…</span>
+      <span id="scrape-elapsed">0:00</span>
+    </div>
+    <div class="scrape-steps" id="scrape-steps"></div>
+    <details class="scrape-log-wrap">
+      <summary>Live log</summary>
+      <pre id="scrape-log"></pre>
+    </details>
+    <div class="scrape-actions">
+      <button id="scrape-close" disabled>Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="note-modal" role="dialog" aria-modal="true">
   <div class="bg" data-close></div>
   <div class="content">
     <h3 id="note-title">—</h3>
     <div class="meta-line" id="note-meta">—</div>
     <textarea id="note-text" placeholder="What I want to remember about this car — CarFax findings, viewing notes, dealer conversations, things to verify, gut feel."></textarea>
+    <label class="upload-zone" id="upload-zone">
+      <input type="file" id="upload-input" multiple>
+      📎 Drop files here or click to attach (CarFax PDFs, photos, service invoices, etc.)
+    </label>
+    <div class="file-list" id="file-list"></div>
     <div class="actions">
-      <button class="delete" id="note-delete">Delete note</button>
+      <button class="delete" id="note-delete">Delete note + files</button>
       <span class="spacer"></span>
       <button id="note-cancel" data-close>Cancel</button>
       <button class="save" id="note-save">Save</button>
@@ -1532,6 +1734,106 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return `<span class="badge src-${src || 'unknown'}">${esc(label)}</span>`;
   }
 
+  // ── IndexedDB for file attachments ───────────────────────────────────
+  const DB_NAME = 'car-finder-files';
+  const DB_VERSION = 1;
+  const STORE = 'attachments';
+  let _dbPromise = null;
+  function db() {
+    if (_dbPromise) return _dbPromise;
+    _dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        const store = req.result.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+        store.createIndex('url', 'url', { unique: false });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _dbPromise;
+  }
+  async function listAttachments(url) {
+    const conn = await db();
+    return new Promise(resolve => {
+      const out = [];
+      const tx = conn.transaction(STORE, 'readonly');
+      const idx = tx.objectStore(STORE).index('url');
+      const req = idx.openCursor(IDBKeyRange.only(url));
+      req.onsuccess = e => {
+        const c = e.target.result;
+        if (c) {
+          const v = c.value;
+          out.push({ id: v.id, name: v.name, type: v.type, size: v.size, added_at: v.added_at });
+          c.continue();
+        } else resolve(out);
+      };
+      req.onerror = () => resolve([]);
+    });
+  }
+  async function addAttachment(url, file) {
+    const conn = await db();
+    const buf = await file.arrayBuffer();
+    return new Promise((resolve, reject) => {
+      const tx = conn.transaction(STORE, 'readwrite');
+      const req = tx.objectStore(STORE).add({
+        url, name: file.name, type: file.type || 'application/octet-stream',
+        size: file.size, data: buf, added_at: new Date().toISOString(),
+      });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function getAttachmentBlob(id) {
+    const conn = await db();
+    return new Promise((resolve, reject) => {
+      const tx = conn.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(id);
+      req.onsuccess = () => {
+        const v = req.result;
+        if (!v) return resolve(null);
+        resolve({ blob: new Blob([v.data], { type: v.type }), name: v.name });
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function deleteAttachment(id) {
+    const conn = await db();
+    return new Promise((resolve, reject) => {
+      const tx = conn.transaction(STORE, 'readwrite');
+      const req = tx.objectStore(STORE).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function deleteAttachmentsForUrl(url) {
+    const list = await listAttachments(url);
+    for (const a of list) await deleteAttachment(a.id);
+  }
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+    return (n/1024/1024).toFixed(1) + ' MB';
+  }
+
+  // Cache of attachment counts (url → count) for refreshing note buttons w/o async
+  const attachCounts = {};
+  async function loadAttachCounts() {
+    const conn = await db();
+    return new Promise(resolve => {
+      const tx = conn.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).openCursor();
+      req.onsuccess = e => {
+        const c = e.target.result;
+        if (c) {
+          attachCounts[c.value.url] = (attachCounts[c.value.url] || 0) + 1;
+          c.continue();
+        } else { resolve(); refreshNoteButtons(); updateExportBtn(); }
+      };
+      req.onerror = () => resolve();
+    });
+  }
+
   // ── Per-listing notes ────────────────────────────────────────────────
   const NOTES_KEY = 'car-notes-v1';
   let notes = {};
@@ -1546,25 +1848,82 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     updateExportBtn();
   }
 
+  // ── Compare cart ─────────────────────────────────────────────────────
+  const COMPARE_KEY = 'car-compare-v1';
+  const COMPARE_MAX = 5;
+  let compareCart = new Set();
+  try { compareCart = new Set(JSON.parse(localStorage.getItem(COMPARE_KEY) || '[]')); } catch (e) {}
+
+  function saveCompare() {
+    try { localStorage.setItem(COMPARE_KEY, JSON.stringify([...compareCart])); } catch (e) {}
+    refreshCompareButtons();
+    updateCompareToolbarBtn();
+    if (typeof renderComparePanel === 'function') renderComparePanel();
+  }
+  function updateCompareToolbarBtn() {
+    const btn = document.getElementById('compare-toggle');
+    if (!btn) return;
+    const n = compareCart.size;
+    btn.textContent = n > 0 ? `⚖ Compare ${n} car${n > 1 ? 's' : ''}` : '⚖ Compare (0)';
+    btn.disabled = n < 1;
+    btn.classList.toggle('has-items', n > 0);
+  }
+
   function noteBtnHtml(url) {
-    const has = !!getNote(url);
-    const tip = has ? 'Note: ' + getNote(url).slice(0, 80) + (getNote(url).length > 80 ? '…' : '') : 'Add note';
-    return `<button class="note-btn${has ? ' has-note' : ''}" data-note-url="${esc(url)}" title="${esc(tip)}">${has ? '📝' : '💬'}</button>`;
+    const noteText = getNote(url);
+    const fileCount = attachCounts[url] || 0;
+    const has = !!noteText || fileCount > 0;
+    const tip = has
+      ? (noteText ? 'Note: ' + noteText.slice(0, 60) + (noteText.length > 60 ? '…' : '') : '')
+        + (fileCount ? ` · ${fileCount} file${fileCount > 1 ? 's' : ''}` : '')
+      : 'Add note / attach files';
+    const label = has ? (fileCount ? `📝 ${fileCount}` : '📝') : '💬';
+    return `<button class="note-btn${has ? ' has-note' : ''}" data-note-url="${esc(url)}" title="${esc(tip.trim())}">${label}</button>`;
+  }
+
+  function aiBtnHtml(url) {
+    return `<button class="ai-btn" data-ai-url="${esc(url)}" title="Send to AI for verdict (single car)">🤖</button>`;
+  }
+  function compareBtnHtml(url) {
+    const sel = compareCart.has(url);
+    const full = !sel && compareCart.size >= 5;
+    const title = sel ? 'Remove from Compare tab'
+                      : (full ? 'Compare cart full (max 5)' : 'Add to Compare tab');
+    return `<input type="checkbox" class="cmp-cb" data-compare-url="${esc(url)}"`
+         + (sel ? ' checked' : '')
+         + (full ? ' disabled' : '')
+         + ` title="${esc(title)}">`;
+  }
+  function refreshCompareButtons() {
+    const full = compareCart.size >= 5;
+    document.querySelectorAll('input.cmp-cb[data-compare-url]').forEach(cb => {
+      const sel = compareCart.has(cb.dataset.compareUrl);
+      cb.checked = sel;
+      cb.disabled = !sel && full;
+      cb.title = sel ? 'Remove from Compare tab'
+                     : (cb.disabled ? 'Compare cart full (max 5)' : 'Add to Compare tab');
+    });
   }
 
   function refreshNoteButtons() {
     document.querySelectorAll('button[data-note-url]').forEach(btn => {
       const url = btn.dataset.noteUrl;
-      const has = !!getNote(url);
+      const noteText = getNote(url);
+      const fileCount = attachCounts[url] || 0;
+      const has = !!noteText || fileCount > 0;
       btn.classList.toggle('has-note', has);
-      btn.textContent = has ? '📝' : '💬';
-      btn.title = has ? 'Note: ' + getNote(url).slice(0, 80) + (getNote(url).length > 80 ? '…' : '') : 'Add note';
+      btn.textContent = has ? (fileCount ? `📝 ${fileCount}` : '📝') : '💬';
+      const tip = has
+        ? (noteText ? 'Note: ' + noteText.slice(0, 60) + (noteText.length > 60 ? '…' : '') : '')
+          + (fileCount ? ` · ${fileCount} file${fileCount > 1 ? 's' : ''}` : '')
+        : 'Add note / attach files';
+      btn.title = tip.trim();
     });
   }
 
   // ── Note modal ───────────────────────────────────────────────────────
   let modalUrl = null;
-  function openNoteModal(it) {
+  async function openNoteModal(it) {
     modalUrl = it.url;
     document.getElementById('note-title').textContent = (it.year ?? '?') + ' ' + it.title;
     const dealerStr = it.seller_name ? it.seller_name + (it.grade ? ' (Grade ' + it.grade + ')' : '') : '—';
@@ -1574,11 +1933,87 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     document.getElementById('note-text').value = getNote(it.url);
     document.getElementById('note-modal').classList.add('open');
     setTimeout(() => document.getElementById('note-text').focus(), 50);
+    await renderFileList(it.url);
   }
   function closeNoteModal() {
     modalUrl = null;
     document.getElementById('note-modal').classList.remove('open');
+    document.getElementById('file-list').innerHTML = '';
+    document.getElementById('upload-input').value = '';
   }
+
+  async function renderFileList(url) {
+    const list = document.getElementById('file-list');
+    const items = await listAttachments(url);
+    if (!items.length) { list.innerHTML = ''; return; }
+    list.innerHTML = items.map(a => `
+      <div class="file-row" data-att-id="${a.id}">
+        <span class="file-name" title="${esc(a.name)}">${esc(a.name)}</span>
+        <span class="file-size">${fmtBytes(a.size)}</span>
+        <span class="file-actions">
+          <button class="dl" data-att-dl="${a.id}">Download</button>
+          <button class="del" data-att-del="${a.id}">Delete</button>
+        </span>
+      </div>`).join('');
+  }
+
+  async function handleFileUpload(files) {
+    if (!modalUrl || !files || !files.length) return;
+    let added = 0, skipped = [];
+    for (const f of files) {
+      if (f.size > 25 * 1024 * 1024) {
+        skipped.push(`${f.name} (>25MB)`);
+        continue;
+      }
+      try {
+        await addAttachment(modalUrl, f);
+        added++;
+        attachCounts[modalUrl] = (attachCounts[modalUrl] || 0) + 1;
+      } catch (e) {
+        skipped.push(`${f.name} (${e.message || 'error'})`);
+      }
+    }
+    if (skipped.length) alert('Skipped:\\n' + skipped.join('\\n'));
+    if (added) {
+      await renderFileList(modalUrl);
+      refreshNoteButtons();
+      updateExportBtn();
+    }
+  }
+
+  // Wire up upload zone (click + drag-drop) and file list (download/delete)
+  const uploadZone = document.getElementById('upload-zone');
+  const uploadInput = document.getElementById('upload-input');
+  uploadInput.addEventListener('change', () => handleFileUpload(uploadInput.files));
+  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    handleFileUpload(e.dataTransfer.files);
+  });
+  document.getElementById('file-list').addEventListener('click', async e => {
+    const dl = e.target.closest('button[data-att-dl]');
+    const del = e.target.closest('button[data-att-del]');
+    if (dl) {
+      const id = parseInt(dl.dataset.attDl, 10);
+      const got = await getAttachmentBlob(id);
+      if (got) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(got.blob);
+        a.download = got.name;
+        a.click();
+      }
+    } else if (del) {
+      const id = parseInt(del.dataset.attDel, 10);
+      if (!confirm('Delete this attachment?')) return;
+      await deleteAttachment(id);
+      if (attachCounts[modalUrl]) attachCounts[modalUrl]--;
+      await renderFileList(modalUrl);
+      refreshNoteButtons();
+      updateExportBtn();
+    }
+  });
 
   document.getElementById('note-modal').addEventListener('click', e => {
     if (e.target.matches('[data-close]')) closeNoteModal();
@@ -1587,8 +2022,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     if (modalUrl) setNote(modalUrl, document.getElementById('note-text').value);
     closeNoteModal();
   });
-  document.getElementById('note-delete').addEventListener('click', () => {
-    if (modalUrl) setNote(modalUrl, '');
+  document.getElementById('note-delete').addEventListener('click', async () => {
+    if (!modalUrl) return;
+    if (!confirm('Delete this note and ALL attached files?')) return;
+    setNote(modalUrl, '');
+    await deleteAttachmentsForUrl(modalUrl);
+    delete attachCounts[modalUrl];
+    refreshNoteButtons();
+    updateExportBtn();
     closeNoteModal();
   });
   document.addEventListener('keydown', e => {
@@ -1614,11 +2055,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   });
 
   // ── Markdown export ──────────────────────────────────────────────────
-  function exportNotesMarkdown() {
+  async function exportNotesMarkdown() {
     const all = [];
     payload.searches.forEach(s => s.items.forEach(it => all.push({...it, _search: s.name})));
-    const annotated = all.filter(it => !!getNote(it.url));
-    if (!annotated.length) { alert('No notes yet.'); return; }
+    const annotated = all.filter(it => !!getNote(it.url) || (attachCounts[it.url] || 0) > 0);
+    if (!annotated.length) { alert('No notes or attachments yet.'); return; }
 
     const lines = [];
     lines.push(`# Car listings — annotated notes`);
@@ -1629,7 +2070,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     lines.push(``);
     lines.push(`---`);
     lines.push(``);
-    annotated.forEach(it => {
+    for (const it of annotated) {
       const total = totalPrice(it);
       lines.push(`## ${it.year ?? '?'} — ${it.title}`);
       lines.push(``);
@@ -1647,30 +2088,40 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       lines.push(`- **Location:** ${it.location || '—'}`);
       lines.push(`- **Listing URL:** ${it.url}`);
       lines.push(``);
-      lines.push(`**My note:**`);
-      lines.push(``);
-      const note = getNote(it.url).split('\n').map(l => '> ' + l).join('\n');
-      lines.push(note);
-      lines.push(``);
+      const noteText = getNote(it.url);
+      if (noteText) {
+        lines.push(`**My note:**`);
+        lines.push(``);
+        lines.push(noteText.split('\\n').map(l => '> ' + l).join('\\n'));
+        lines.push(``);
+      }
+      const atts = await listAttachments(it.url);
+      if (atts.length) {
+        lines.push(`**Attached documents** (not in this markdown — upload to the AI separately):`);
+        atts.forEach(a => lines.push(`- 📎 \`${a.name}\` (${fmtBytes(a.size)}, ${a.type || 'unknown type'})`));
+        lines.push(``);
+      }
       lines.push(`---`);
       lines.push(``);
-    });
-    return lines.join('\n');
+    }
+    return lines.join('\\n');
   }
 
   function updateExportBtn() {
     const btn = document.getElementById('export-md');
-    const n = Object.values(notes).filter(v => v && v.trim()).length;
+    const noteUrls = new Set(Object.keys(notes).filter(u => notes[u] && notes[u].trim()));
+    const attachUrls = new Set(Object.keys(attachCounts).filter(u => attachCounts[u] > 0));
+    const n = new Set([...noteUrls, ...attachUrls]).size;
     btn.textContent = `📋 Export notes (${n})`;
     btn.disabled = n === 0;
   }
-  document.getElementById('export-md').addEventListener('click', () => {
-    const md = exportNotesMarkdown();
+  document.getElementById('export-md').addEventListener('click', async () => {
+    const md = await exportNotesMarkdown();
     if (!md) return;
-    // Try clipboard first, fall back to download
+    const annotatedCount = Object.keys(notes).length + Object.keys(attachCounts).length;
     if (navigator.clipboard) {
       navigator.clipboard.writeText(md).then(
-        () => alert(`Copied ${Object.values(notes).filter(v=>v.trim()).length} annotated listing(s) as markdown to your clipboard.\n\nPaste into your favorite AI chat to ask for cross-listing analysis.`),
+        () => alert(`Copied annotated listings as Markdown to your clipboard.\n\nPaste into your AI chat for cross-listing analysis. Any attached documents are listed by filename — open the note again to download them and upload to the AI separately.`),
         () => downloadMarkdown(md)
       );
     } else {
@@ -1685,6 +2136,167 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     a.click();
   }
   updateExportBtn();
+  updateCompareToolbarBtn();
+  loadAttachCounts();   // async — refreshes note buttons + export count when loaded
+
+  // ── AI single-car + multi-car prompts ────────────────────────────────
+  const PRIORITIES_BLOCK = [
+    'MY PRIORITIES (in order):',
+    '1. Safety',
+    '2. Easy for a new / learner driver to learn on',
+    '3. Around $35,000 CAD budget (out-the-door)',
+    '4. Near-zero maintenance ownership',
+    '5. Low town-driving fuel cost',
+    '6. Good resale value',
+  ].join('\\n');
+
+  function findListingByUrl(url) {
+    for (const s of payload.searches) {
+      const m = s.items.find(it => it.url === url);
+      if (m) return { it: m, search: s.name };
+    }
+    return null;
+  }
+
+  async function buildListingBlock(it, search) {
+    const total = totalPrice(it);
+    const atts = await listAttachments(it.url);
+    const note = getNote(it.url);
+    const out = [];
+    out.push(`### ${it.year ?? '?'} — ${it.title}`);
+    out.push(``);
+    out.push(`- **Search bucket:** ${search}`);
+    out.push(`- **Source:** ${it.source}`);
+    out.push(`- **Sticker:** ${fmtMoney(it.price)}` + (total ? `  ·  **Out the door (estimated):** ${fmtMoney(total)}` : ''));
+    out.push(`- **Odometer:** ${fmtKm(it.km)}`);
+    out.push(`- **Year:** ${it.year ?? '?'}`);
+    out.push(`- **Deal score vs market:** ${fmtPct(it.deal_score)}`);
+    const seller = it.seller_name
+      ? `${it.seller_name} (Grade ${it.grade || '?'}${it.rating != null ? `, ⭐${it.rating}/${(it.review_count||0).toLocaleString()} Google reviews` : ''}${it.brand_match ? ', brand-name dealer' : ''}${it.is_cpo ? ', CPO listing' : ''})`
+      : 'Private / unknown';
+    out.push(`- **Seller:** ${seller}`);
+    out.push(`- **Warranty status:** ${it.warranty_label} — ${it.warranty_detail || ''}`);
+    out.push(`- **Location:** ${it.location || '—'}`);
+    out.push(`- **Listing URL:** ${it.url}`);
+    if (note) {
+      out.push(``);
+      out.push(`**My notes:**`);
+      out.push(``);
+      out.push(note.split('\\n').map(l => '> ' + l).join('\\n'));
+    }
+    if (atts.length) {
+      out.push(``);
+      out.push(`**Attached documents** (referenced — I will upload separately):`);
+      atts.forEach(a => out.push(`- 📎 \`${a.name}\` (${fmtBytes(a.size)}, ${a.type || 'unknown'})`));
+    }
+    return out.join('\\n');
+  }
+
+  async function askAiForOne(url) {
+    const found = findListingByUrl(url);
+    if (!found) return;
+    const block = await buildListingBlock(found.it, found.search);
+    const prompt = [
+      `I'm evaluating this used car for purchase. Give me a clear verdict (Buy / Negotiate / Walk away) considering my priorities and any red flags you spot.`,
+      ``,
+      PRIORITIES_BLOCK,
+      ``,
+      `## The listing`,
+      ``,
+      block,
+      ``,
+      `## What I want from you`,
+      ``,
+      `1. **Verdict:** Buy / Negotiate / Walk away — pick one.`,
+      `2. **The strongest single concern** I should verify before purchase.`,
+      `3. **Negotiation angle** (price, doc fee, included extras, warranty, recall completion, etc.).`,
+      `4. **What questions to ask the dealer** that I haven't already?`,
+      ``,
+      `Be direct. Don't hedge. If anything in this listing should make me walk away, say so plainly.`,
+    ].join('\\n');
+    await sendPromptToAi(prompt, '1 car');
+  }
+
+  async function compareSelected() {
+    if (compareCart.size === 0) return;
+    const urls = [...compareCart];
+    const blocks = [];
+    for (const url of urls) {
+      const f = findListingByUrl(url);
+      if (!f) continue;
+      blocks.push(await buildListingBlock(f.it, f.search));
+      blocks.push(``);
+      blocks.push(`---`);
+      blocks.push(``);
+    }
+    const n = urls.length;
+    const prompt = [
+      `I'm comparing ${n} used cars and need to pick one (or walk away from all). Please rank them for my priorities and give me one decisive recommendation.`,
+      ``,
+      PRIORITIES_BLOCK,
+      ``,
+      `## The candidates`,
+      ``,
+      blocks.join('\\n'),
+      `## What I want from you`,
+      ``,
+      `1. **Rank them** from best to worst for my priorities. One short paragraph per car explaining the trade-offs.`,
+      `2. **One decisive pick** (or "walk away from all" if appropriate) and why.`,
+      `3. **Single biggest risk per car** — what's most likely to bite me later.`,
+      `4. **What's missing from my data** — what should I find out before deciding?`,
+      ``,
+      `Be direct. Don't hedge.`,
+    ].join('\\n');
+    await sendPromptToAi(prompt, `${n} cars`);
+  }
+
+  async function sendPromptToAi(prompt, label) {
+    let copied = false;
+    try { await navigator.clipboard.writeText(prompt); copied = true; } catch (e) {}
+    if (copied) {
+      const open = confirm(
+        `Prompt for ${label} copied to clipboard (${prompt.length.toLocaleString()} chars).\\n\\n` +
+        `Click OK to open Claude.ai in a new tab — then paste (Cmd+V).\\n` +
+        `Or click Cancel to keep this tab and paste into your AI of choice.`
+      );
+      if (open) window.open('https://claude.ai/new', '_blank', 'noopener,noreferrer');
+    } else {
+      // Fallback: open the prompt in a new tab as readable text for manual copy
+      const w = window.open('', '_blank');
+      if (w) {
+        const safe = prompt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+        w.document.write(
+          `<title>AI prompt — ${label}</title>` +
+          `<pre style="white-space:pre-wrap;font-family:ui-monospace,SF Mono,Menlo,monospace;` +
+          `padding:24px;max-width:900px;margin:auto;line-height:1.5;font-size:14px">${safe}</pre>`
+        );
+      }
+    }
+  }
+
+  // Delegated handlers for AI button (click) + Compare checkbox (change)
+  document.addEventListener('click', e => {
+    const ai = e.target.closest('button[data-ai-url]');
+    if (ai) { e.preventDefault(); e.stopPropagation(); askAiForOne(ai.dataset.aiUrl); }
+  });
+  document.addEventListener('change', e => {
+    const cb = e.target.closest('input.cmp-cb[data-compare-url]');
+    if (!cb) return;
+    const url = cb.dataset.compareUrl;
+    if (cb.checked) {
+      if (compareCart.size >= COMPARE_MAX) {
+        cb.checked = false;
+        alert(`Max ${COMPARE_MAX} cars in compare cart. Remove one first.`);
+        return;
+      }
+      compareCart.add(url);
+    } else {
+      compareCart.delete(url);
+    }
+    saveCompare();
+  });
+
+  document.getElementById('compare-toggle').addEventListener('click', () => compareSelected());
 
   function warrantyCell(it) {
     const cls = it.warranty_cls || 'unknown';
@@ -1709,7 +2321,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <td>${dealerCell(it)}</td>
         <td>${warrantyCell(it)}</td>
         <td class="hide-sm">${esc(it.location || '')}</td>
-        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a> ${noteBtnHtml(it.url)}</td>
+        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a> ${noteBtnHtml(it.url)} ${aiBtnHtml(it.url)} ${compareBtnHtml(it.url)}</td>
       </tr>`;
   }
 
@@ -2065,7 +2677,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <td>${fmtMoney(total)}</td>
           <td>${fmtKm(it.km)}</td>
           <td>${warrantyCell(it)}</td>
-          <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a> ${noteBtnHtml(it.url)}</td>
+          <td><a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a> ${noteBtnHtml(it.url)} ${aiBtnHtml(it.url)} ${compareBtnHtml(it.url)}</td>
         </tr>`;
       }).join('');
       const moreCount = d.listings.length - top.length;
@@ -2244,6 +2856,99 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     return panel;
   }
 
+  // Compare panel + tab badge — populated lazily
+  let comparePanelEl = null;
+  function renderComparePanel() {
+    if (!comparePanelEl) return;
+    const items = [...compareCart].map(findListingByUrl).filter(Boolean);
+    const tab = document.getElementById('tab-compare');
+    if (tab) tab.textContent = compareCart.size ? `⚖ Compare (${compareCart.size})` : '⚖ Compare';
+
+    if (!items.length) {
+      comparePanelEl.innerHTML = `
+        <h2>⚖ Compare cars</h2>
+        <div class="panel-meta">Tick the checkbox at the end of any listing row to add a car here. Maximum 5.</div>
+        <div class="empty">No cars selected yet.</div>`;
+      return;
+    }
+
+    const total = it => totalPrice(it);
+    const cell = (label, render) => `
+      <tr><td>${label}</td>${items.map(f => `<td class="car-col">${render(f.it)}</td>`).join('')}</tr>`;
+
+    const rows = [
+      cell('Title',       it => esc(it.title)),
+      cell('Year',        it => it.year ?? '?'),
+      cell('Sticker',     it => fmtMoney(it.price)),
+      cell('Out-the-door (est.)', it => fmtMoney(total(it))),
+      cell('Odometer',    it => fmtKm(it.km)),
+      cell('Deal score',  it => {
+        const [lbl, cls] = flagFor(it.deal_score);
+        return `<span class="deal ${cls}">${lbl} ${fmtPct(it.deal_score)}</span>`;
+      }),
+      cell('Source',      it => sourceBadge(it.source)),
+      cell('Dealer',      it => esc(it.seller_name || '—')),
+      cell('Dealer grade',it => gradeBadge(it.grade, it.grade_score)
+                              + (it.brand_match ? ' <span class="badge brand">brand</span>' : '')
+                              + (it.is_cpo ? ' <span class="badge cpo">CPO</span>' : '')),
+      cell('Google reviews', it => it.rating != null
+                                   ? `⭐${it.rating} (${(it.review_count||0).toLocaleString()})`
+                                   : '—'),
+      cell('Warranty',    it => warrantyCell(it)),
+      cell('Location',    it => esc(it.location || '—')),
+      cell('My note',     it => {
+        const n = getNote(it.url);
+        const ac = attachCounts[it.url] || 0;
+        if (!n && !ac) return '<span style="color:#9ca3af">none</span>';
+        const parts = [];
+        if (n) parts.push(esc(n.length > 90 ? n.slice(0, 87) + '…' : n));
+        if (ac) parts.push(`<em>${ac} attached file${ac > 1 ? 's' : ''}</em>`);
+        return parts.join('<br>');
+      }),
+      cell('Link',        it => `<a href="${esc(it.url)}" target="_blank" rel="noopener">view ↗</a>`),
+      cell('',            it => `<button class="compare-remove" data-compare-remove="${esc(it.url)}">Remove</button>`),
+    ].join('');
+
+    comparePanelEl.innerHTML = `
+      <h2>⚖ Compare ${items.length} car${items.length > 1 ? 's' : ''}</h2>
+      <div class="panel-meta">Side-by-side view of cars in your compare cart. The 🤖 button below sends all of them to an AI with your priorities for a cross-comparison recommendation.</div>
+      <div class="compare-actions">
+        <button class="primary" id="compare-tab-ai">🤖 Ask AI for cross-comparison recommendation</button>
+        <button class="ghost" id="compare-tab-clear">Clear all (${items.length})</button>
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="compare-table">
+          <thead><tr>
+            <th></th>
+            ${items.map((f, i) => `<th class="car-col">Car ${i + 1}</th>`).join('')}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+    comparePanelEl.querySelector('#compare-tab-ai').onclick = () => compareSelected();
+    comparePanelEl.querySelector('#compare-tab-clear').onclick = () => {
+      if (!confirm(`Clear all ${compareCart.size} selected car${compareCart.size > 1 ? 's' : ''}?`)) return;
+      compareCart.clear();
+      saveCompare();
+    };
+    comparePanelEl.querySelectorAll('button[data-compare-remove]').forEach(b => {
+      b.onclick = () => {
+        compareCart.delete(b.dataset.compareRemove);
+        saveCompare();
+      };
+    });
+  }
+
+  function buildComparePanel(idx) {
+    const panel = document.createElement('div');
+    panel.id = 'panel-' + idx;
+    panel.className = 'panel';
+    comparePanelEl = panel;
+    renderComparePanel();
+    return panel;
+  }
+
   function makeTab(label, idx, isActive) {
     const t = document.createElement('button');
     t.className = 'tab' + (isActive ? ' active' : '');
@@ -2276,14 +2981,272 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   tabsEl.appendChild(makeTab(`📡 Status (${okCount}/${expectedCount})`, statusIdx, false));
   panelsEl.appendChild(buildStatusPanel(payload.searches, payload.runs || [], statusIdx));
 
+  const compareIdx = statusIdx + 1;
+  const compareTabLabel = compareCart.size ? `⚖ Compare (${compareCart.size})` : '⚖ Compare';
+  const compareTab = makeTab(compareTabLabel, compareIdx, false);
+  compareTab.id = 'tab-compare';
+  tabsEl.appendChild(compareTab);
+  panelsEl.appendChild(buildComparePanel(compareIdx));
+
   setupMatrixUI();
+  setupRescrape();
+
+  // ── Re-scrape: triggers server-side scraper + streams progress ───────
+  function setupRescrape() {
+    const btn       = document.getElementById('rescrape-btn');
+    const overlay   = document.getElementById('scrape-overlay');
+    const stepsEl   = document.getElementById('scrape-steps');
+    const barFill   = document.getElementById('scrape-bar-fill');
+    const progText  = document.getElementById('scrape-progress-text');
+    const elapsed   = document.getElementById('scrape-elapsed');
+    const logEl     = document.getElementById('scrape-log');
+    const closeBtn  = document.getElementById('scrape-close');
+
+    // ── Step model: 2 per search (autotrader + kijiji) + enrich + write ───
+    const SEARCH_NAMES = payload.searches.map(s => s.name);
+    const SOURCES = ['autotrader', 'kijiji'];
+    let steps = [];
+    function buildSteps() {
+      steps = [];
+      SEARCH_NAMES.forEach(name => SOURCES.forEach(src => {
+        steps.push({ kind: 'scrape', name, src, status: 'pending', count: null });
+      }));
+      steps.push({ kind: 'enrich', dealersTotal: null, dealersDone: 0, status: 'pending' });
+      steps.push({ kind: 'write', status: 'pending' });
+      renderSteps();
+    }
+    function renderSteps() {
+      stepsEl.innerHTML = steps.map(s => {
+        let icon, label, count = '';
+        if (s.kind === 'scrape') {
+          label = `${esc(s.name)} — <strong>${SOURCE_LABEL_SHORT[s.src]}</strong>`;
+          icon = STATUS_ICON[s.status];
+          if (s.count != null) count = `${s.count} listings`;
+        } else if (s.kind === 'enrich') {
+          label = '🏪 Dealer enrichment (Google Places)';
+          icon = STATUS_ICON[s.status];
+          if (s.dealersTotal) count = `${s.dealersDone} / ${s.dealersTotal} dealers`;
+        } else if (s.kind === 'write') {
+          label = '📄 Write deals_report.md + index.html';
+          icon = STATUS_ICON[s.status];
+        }
+        return `<div class="scrape-step ${s.status}">
+          <span class="ico">${icon}</span>
+          <span class="label">${label}</span>
+          <span class="count">${count}</span>
+        </div>`;
+      }).join('');
+      updateProgressBar();
+    }
+    const SOURCE_LABEL_SHORT = { autotrader: 'AutoTrader', kijiji: 'Kijiji' };
+    const STATUS_ICON = {
+      pending: '⏳',
+      running: '🔄',
+      ok:      '✅',
+      blocked: '⛔',
+      error:   '❌',
+    };
+    function updateProgressBar() {
+      const total = steps.length;
+      let weighted = 0;
+      steps.forEach(s => {
+        if (s.status === 'ok') weighted += 1;
+        else if (s.status === 'running' && s.kind === 'enrich' && s.dealersTotal) {
+          weighted += s.dealersDone / s.dealersTotal;
+        } else if (s.status === 'running') weighted += 0.5;
+        else if (s.status === 'blocked' || s.status === 'error') weighted += 1;
+      });
+      const pct = total ? Math.round(weighted / total * 100) : 0;
+      barFill.style.width = pct + '%';
+      const okCount = steps.filter(s => s.status === 'ok').length;
+      const doneCount = steps.filter(s => s.status !== 'pending' && s.status !== 'running').length;
+      progText.textContent = `${okCount} OK · ${doneCount} / ${total} steps · ${pct}%`;
+    }
+    function elapsedStr(secs) {
+      const m = Math.floor(secs / 60), s = Math.floor(secs % 60);
+      return `${m}:${String(s).padStart(2,'0')}`;
+    }
+
+    let startedAt = null;
+    let elapsedTimer = null;
+    function startElapsed(ts) {
+      startedAt = ts;
+      if (elapsedTimer) clearInterval(elapsedTimer);
+      elapsedTimer = setInterval(() => {
+        if (startedAt) elapsed.textContent = elapsedStr(Date.now()/1000 - startedAt);
+      }, 1000);
+    }
+    function stopElapsed() {
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
+
+    // ── Parsing scraper stdout ──────────────────────────────────────────
+    let currentSearch = null;
+    function parseLog(text) {
+      logEl.textContent += text + '\\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      let m;
+      if (m = text.match(/^🔎\s+(.+)$/)) {
+        currentSearch = m[1].trim();
+        // Mark autotrader step running for this search
+        const i = steps.findIndex(s => s.kind==='scrape' && s.name===currentSearch && s.src==='autotrader');
+        if (i >= 0 && steps[i].status === 'pending') {
+          steps[i].status = 'running'; renderSteps();
+        }
+        return;
+      }
+      // "autotrader: ✅ ok, 80 listings" or "kijiji: ⛔ blocked, 0 listings"
+      if (m = text.match(/^\s*(autotrader|kijiji):\s*\S+\s+(ok|blocked|no_results|error),\s*(\d+)\s+listings/)) {
+        const src = m[1];
+        const status = m[2] === 'no_results' ? 'ok' : m[2];   // no_results still counts as completed
+        const n = parseInt(m[3], 10);
+        const i = steps.findIndex(s => s.kind==='scrape' && s.name===currentSearch && s.src===src);
+        if (i >= 0) {
+          steps[i].status = status;
+          steps[i].count = n;
+          // If this was AT, mark kijiji as running next; if Kijiji, search is done
+          if (src === 'autotrader') {
+            const ki = i + 1;
+            if (steps[ki] && steps[ki].status === 'pending') steps[ki].status = 'running';
+          }
+          renderSteps();
+        }
+        return;
+      }
+      // "🏪 Enriching 57 unique dealer(s)…"
+      if (m = text.match(/Enriching\s+(\d+)\s+unique dealer/)) {
+        const ei = steps.findIndex(s => s.kind === 'enrich');
+        if (ei >= 0) {
+          steps[ei].status = 'running';
+          steps[ei].dealersTotal = parseInt(m[1], 10);
+          steps[ei].dealersDone = 0;
+          renderSteps();
+        }
+        return;
+      }
+      // " · Dealer Name → ⭐4.5 / 1234 reviews"  OR  " · Dealer Name → no Google match"
+      if (text.match(/^\s+·\s+.+→/)) {
+        const ei = steps.findIndex(s => s.kind === 'enrich');
+        if (ei >= 0 && steps[ei].status === 'running') {
+          steps[ei].dealersDone++;
+          renderSteps();
+        }
+        return;
+      }
+      // "🌐 HTML report written: car-deals/index.html"
+      if (text.includes('HTML report written')) {
+        const ei = steps.findIndex(s => s.kind === 'enrich');
+        if (ei >= 0 && steps[ei].status === 'running') {
+          steps[ei].status = 'ok';
+          if (steps[ei].dealersTotal) steps[ei].dealersDone = steps[ei].dealersTotal;
+        }
+        const wi = steps.findIndex(s => s.kind === 'write');
+        if (wi >= 0) steps[wi].status = 'ok';
+        renderSteps();
+        return;
+      }
+    }
+
+    // ── Server interaction ──────────────────────────────────────────────
+    let sse = null;
+    function openSSE() {
+      if (sse) sse.close();
+      sse = new EventSource('/api/scrape-stream');
+      sse.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'start') {
+          buildSteps();
+          logEl.textContent = '';
+          startElapsed(msg.at);
+        } else if (msg.type === 'log') {
+          parseLog(msg.text);
+        } else if (msg.type === 'done') {
+          finishScrape(msg.code);
+        }
+      };
+      sse.onerror = () => { /* browser will auto-reconnect */ };
+    }
+
+    function finishScrape(code) {
+      stopElapsed();
+      closeBtn.disabled = false;
+      if (code === 0) {
+        progText.textContent = '✅ Done — reloading…';
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        progText.textContent = `❌ Exited with code ${code}`;
+      }
+    }
+
+    async function probeServer() {
+      try {
+        const r = await fetch('/api/scrape-status', { method: 'GET' });
+        if (!r.ok) return false;
+        const data = await r.json();
+        btn.classList.remove('hidden');
+        if (data.running) {
+          overlay.classList.add('open');
+          buildSteps();
+          // Replay any logs already collected
+          (data.log || []).forEach(ev => {
+            if (ev.type === 'log') parseLog(ev.text);
+            else if (ev.type === 'start') startElapsed(ev.at);
+          });
+          openSSE();
+        }
+        return true;
+      } catch (e) {
+        return false;   // Not on local server (Firebase, file://, etc.) — keep button hidden
+      }
+    }
+
+    btn.addEventListener('click', async () => {
+      if (!confirm('Start a fresh scrape now? Chromium will open. Takes ~6-8 min. Click OK to begin.')) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/scrape', { method: 'POST' });
+        if (r.status === 202 || r.ok) {
+          overlay.classList.add('open');
+          buildSteps();
+          closeBtn.disabled = true;
+          logEl.textContent = '';
+          openSSE();
+        } else if (r.status === 409) {
+          overlay.classList.add('open');
+          buildSteps();
+          openSSE();
+        } else {
+          alert('Could not start scrape: HTTP ' + r.status);
+        }
+      } catch (e) {
+        alert('Server error: ' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    closeBtn.addEventListener('click', () => {
+      overlay.classList.remove('open');
+      if (sse) { sse.close(); sse = null; }
+    });
+
+    probeServer();
+  }
 })();
 </script>
 </body>
 </html>"""
 
 def write_html_report(conn: sqlite3.Connection, out_dir: str) -> None:
+    # Only include listings seen in the most recent OK scrape for their
+    # (search_name, source) — anything older is treated as expired/sold.
     rows = conn.execute("""
+        WITH latest_ok AS (
+            SELECT search_name, source, MAX(started_at) AS latest_run_start
+            FROM scrape_runs
+            WHERE status = 'ok'
+            GROUP BY search_name, source
+        )
         SELECT l.search_name, l.year, l.title, l.price, l.km, l.location,
                l.deal_score, l.url, l.is_cpo, l.source,
                l.seller_id, l.seller_name,
@@ -2291,7 +3254,12 @@ def write_html_report(conn: sqlite3.Connection, out_dir: str) -> None:
                d.google_match
         FROM listings l
         LEFT JOIN dealers d ON d.customer_id = l.seller_id
+        LEFT JOIN latest_ok lo
+               ON lo.search_name = l.search_name
+              AND lo.source      = l.source
         WHERE l.deal_score IS NOT NULL
+          AND (lo.latest_run_start IS NULL
+               OR l.scraped_at >= lo.latest_run_start)
         ORDER BY l.search_name, l.deal_score ASC
     """).fetchall()
 

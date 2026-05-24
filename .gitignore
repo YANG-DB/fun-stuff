@@ -64,5 +64,8 @@ __pycache__/
 # Firebase local state
 .firebase/
 
+# Personal car research (CarFax PDFs with VINs, dealer photos, etc.)
+car-deals/car-info/
+
 # Local Claude config
 .claude/
