@@ -1,0 +1,17 @@
+{
+  "name": "personal-claude-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --no-warnings src/server.js",
+    "start": "node --no-warnings src/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "google-auth-library": "^9.15.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

@@ -1,0 +1,24 @@
+# ---- personal financial data — NEVER commit ----
+*.csv
+*.csv.bak
+*.csv.bak2
+*.bak
+*.bak2
+source/data/
+data/
+
+# personal categorization rules (derived from real spending)
+category-rules.json
+
+# ---- local Claude Code config ----
+.claude/settings.local.json
+
+# ---- dependencies & build output ----
+node_modules/
+dist/
+.vite/
+
+# ---- OS / editor junk ----
+._*
+.DS_Store
+*.log

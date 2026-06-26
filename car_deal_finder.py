@@ -148,6 +148,56 @@ SEARCHES: list[dict] = [
         "must_match": [],
         "drop_match": [r"\bSi\b", r"\bType R\b", r"\bHybrid\b"],
     },
+    # ── EV searches: 2024+ model year, under $45k, low-km / great-shape ──
+    {
+        "name": "Tesla Model 3 (2024+ EV)",
+        "make": "tesla", "model": "model-3",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 25_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [r"\bPerformance\b"],
+    },
+    {
+        "name": "Tesla Model Y (2024+ EV)",
+        "make": "tesla", "model": "model-y",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 30_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [r"\bPerformance\b"],
+    },
+    {
+        "name": "Hyundai Ioniq 5 (2024+ EV)",
+        "make": "hyundai", "model": "ioniq-5",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 25_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [],
+    },
+    {
+        "name": "Kia EV6 (2024+ EV)",
+        "make": "kia", "model": "ev6",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 25_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [r"\bGT\b"],
+    },
+    {
+        "name": "Hyundai Kona Electric (2024+ EV)",
+        "make": "hyundai", "model": "kona-electric",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 20_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [],
+    },
+    {
+        "name": "Chevy Bolt EUV (2024+ EV)",
+        "make": "chevrolet", "model": "bolt-euv",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 18_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [],
+    },
+    {
+        "name": "VW ID.4 (2024+ EV)",
+        "make": "volkswagen", "model": "id4",
+        "year_min": 2024, "year_max": 2025,
+        "price_min": 25_000, "price_max": 45_000, "km_max": 50_000,
+        "must_match": [], "drop_match": [],
+    },
 ]
 
 LOCATION    = "Vancouver, BC"
@@ -760,9 +810,12 @@ WARRANTY_RULES: dict[str, dict[str, tuple[int, int]]] = {
     "hyundai": {"basic": (5, 100_000), "powertrain": (5, 100_000),
                 "hybrid": (10, 200_000)},            # subsequent-owner transferable
     "kia":     {"basic": (5, 100_000), "powertrain": (5, 100_000)},
-    # Tesla Model 3 SR+/Long Range: 4yr/80k basic, 8yr/160k battery+drive unit
-    # with min 70% capacity retention. No traditional CPO program in Canada.
+    # Tesla Model 3/Y: 4yr/80k basic, 8yr/160k battery+drive unit (70% capacity floor)
     "tesla":   {"basic": (4,  80_000), "powertrain": (8, 160_000)},
+    # Chevy Bolt EUV: 3yr/60k basic + 5yr/100k powertrain + 8yr/160k EV battery
+    "chevrolet": {"basic": (3, 60_000), "powertrain": (5, 100_000), "hybrid": (8, 160_000)},
+    # VW ID.4: 4yr/80k basic + 5yr/100k powertrain + 8yr/160k EV battery
+    "volkswagen": {"basic": (4, 80_000), "powertrain": (5, 100_000), "hybrid": (8, 160_000)},
 }
 
 def warranty_for(year: int | None, km: int | None, search_name: str | None,
@@ -777,7 +830,7 @@ def warranty_for(year: int | None, km: int | None, search_name: str | None,
         return {"label": "—", "detail": "Model year not parsed.", "cls": "unknown"}
 
     make_match = re.search(
-        r"\b(toyota|mazda|honda|nissan|hyundai|kia|tesla)\b",
+        r"\b(toyota|mazda|honda|nissan|hyundai|kia|tesla|chevrolet|chevy|volkswagen|vw)\b",
         search_name or "", re.I,
     )
     make_key = make_match.group(1).lower() if make_match else None
@@ -1196,6 +1249,97 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .compare-btn.selected {
     background: #fef3c7; color: #78350f; border-color: #fde68a; font-weight: 600;
   }
+  .vhr-link {
+    display: inline-block; padding: 2px 7px; border-radius: 5px;
+    border: 1px solid #fde68a; color: #92400e; background: #fef3c7;
+    text-decoration: none; font-size: 0.92em; margin-left: 4px;
+    vertical-align: middle; font-weight: 600;
+  }
+  .vhr-link:hover { background: #fde68a; text-decoration: none; }
+  #note-modal .vhr-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 12px;
+    font-size: 0.88em; color: #4b5563;
+  }
+  #note-modal .vhr-row input {
+    flex: 1; padding: 8px 10px; border: 1px solid #c8d2e0;
+    border-radius: 6px; font-size: 0.88em; font-family: inherit;
+  }
+  #note-modal .vhr-row input:focus { outline: none; border-color: #2a5298; }
+  #note-modal .vhr-row label { white-space: nowrap; font-weight: 600; color: #1f2937; }
+  /* Report button + modal */
+  .report-btn {
+    background: none; border: 1px solid #c8d2e0; color: #0f766e;
+    padding: 2px 7px; border-radius: 5px; cursor: pointer;
+    font-size: 0.95em; margin-left: 4px; vertical-align: middle;
+    font-family: inherit;
+  }
+  .report-btn:hover { background: #ccfbf1; }
+  #report-modal {
+    position: fixed; inset: 0; z-index: 5500;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #report-modal.open { display: flex; }
+  #report-modal .bg { position: absolute; inset: 0; background: rgba(15, 32, 39, 0.55); }
+  #report-modal .content {
+    position: relative; background: #fff; border-radius: 12px;
+    padding: 28px 32px; width: 100%; max-width: 720px;
+    max-height: 88vh; overflow: auto;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.3); z-index: 1;
+  }
+  #report-modal h2 { font-size: 1.3em; color: #0f2027; margin-bottom: 4px; }
+  #report-modal .sub { color: #6b7280; font-size: 0.9em; margin-bottom: 18px;
+                       padding-bottom: 14px; border-bottom: 1px solid #e5e7eb; }
+  #report-modal .grid {
+    display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px;
+    font-size: 0.92em; margin-bottom: 16px;
+  }
+  #report-modal .grid .k { color: #6b7280; font-weight: 500; }
+  #report-modal .grid .v { color: #0f2027; }
+  #report-modal h3 {
+    font-size: 1em; color: #1f2937; margin: 16px 0 8px;
+    padding-bottom: 4px; border-bottom: 1px solid #e5e7eb;
+  }
+  #report-modal .notes-block {
+    background: #f5f7fb; padding: 12px 14px; border-radius: 6px;
+    font-size: 0.92em; white-space: pre-wrap; line-height: 1.5; color: #1f2937;
+  }
+  #report-modal .file-line {
+    padding: 4px 0; font-size: 0.88em; color: #1f2937;
+    border-bottom: 1px dashed #e5e7eb;
+  }
+  #report-modal .file-line:last-child { border-bottom: none; }
+  #report-modal .actions {
+    margin-top: 18px; display: flex; gap: 8px; justify-content: flex-end;
+  }
+  #report-modal .actions button {
+    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 0.92em;
+    border: 1px solid #c8d2e0; background: #fff; font-family: inherit;
+  }
+  #report-modal .actions .primary { background: #0f766e; color: #fff; border-color: #0f766e; }
+  #report-modal .actions .primary:hover { background: #115e59; }
+  @media print {
+    body * { visibility: hidden; }
+    #report-modal, #report-modal * { visibility: visible; }
+    #report-modal { position: absolute; inset: 0; padding: 0; }
+    #report-modal .bg { display: none; }
+    #report-modal .content {
+      box-shadow: none; max-height: none; max-width: 100%; padding: 24px;
+    }
+    #report-modal .actions { display: none; }
+  }
+  /* Ignore */
+  .ignore-btn {
+    background: none; border: 1px solid #c8d2e0; color: #6b7280;
+    padding: 2px 7px; border-radius: 5px; cursor: pointer;
+    font-size: 0.95em; margin-left: 4px; vertical-align: middle;
+    font-family: inherit;
+  }
+  .ignore-btn:hover { background: #f5f7fb; }
+  .ignore-btn.ignored {
+    background: #fee2e2; color: #7f1d1d; border-color: #fecaca; font-weight: 600;
+  }
+  tr.row-ignored { opacity: 0.45; }
+  tr.row-ignored td { background: #fef2f2 !important; }
   input.cmp-cb {
     width: 18px; height: 18px; vertical-align: middle;
     accent-color: #2a5298; cursor: pointer; margin-left: 4px;
@@ -1460,12 +1604,29 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 
+<div id="report-modal" role="dialog" aria-modal="true">
+  <div class="bg" data-close></div>
+  <div class="content">
+    <h2 id="report-title">—</h2>
+    <div class="sub" id="report-sub">—</div>
+    <div id="report-body"></div>
+    <div class="actions">
+      <button data-close>Close</button>
+      <button class="primary" id="report-print">🖨 Print / Save PDF</button>
+    </div>
+  </div>
+</div>
+
 <div id="note-modal" role="dialog" aria-modal="true">
   <div class="bg" data-close></div>
   <div class="content">
     <h3 id="note-title">—</h3>
     <div class="meta-line" id="note-meta">—</div>
     <textarea id="note-text" placeholder="What I want to remember about this car — CarFax findings, viewing notes, dealer conversations, things to verify, gut feel."></textarea>
+    <div class="vhr-row">
+      <label for="note-vhr">🔍 CarFax / VHR URL:</label>
+      <input type="url" id="note-vhr" placeholder="https://vhr.carfax.ca/?id=…">
+    </div>
     <label class="upload-zone" id="upload-zone">
       <input type="file" id="upload-input" multiple>
       📎 Drop files here or click to attach (CarFax PDFs, photos, service invoices, etc.)
@@ -1847,6 +2008,128 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     refreshNoteButtons();
     updateExportBtn();
   }
+
+  // ── VHR (CarFax) links per listing ───────────────────────────────────
+  const VHR_KEY = 'car-vhr-v1';
+  // Pre-seeded mappings — added by user during conversation. Don't override
+  // values the user has set themselves.
+  const KNOWN_VHRS = {
+    'https://www.autotrader.ca/offers/toyota-rav-4-le-awd--clean-title-one-owner-gas-electric-hybrid-white-9f462e84-da22-4f76-876f-ad409410200a':
+      'https://vhr.carfax.ca/?id=x08mEg9wpnDYqwr2opZzklEUmH4lrVqX',
+    'https://www.autotrader.ca/offers/toyota-rav-4-xle-awd-gas-electric-hybrid-white-f7449ff1-364f-49ed-af7a-10a58a412352':
+      'https://vhr.carfax.ca/?id=Qn1m%2FctHiOLm+WlGL8tCMiJU6idTUCcY',
+  };
+  let vhrLinks = {};
+  try { vhrLinks = JSON.parse(localStorage.getItem(VHR_KEY) || '{}') || {}; } catch (e) {}
+  let _seeded = false;
+  for (const [k, v] of Object.entries(KNOWN_VHRS)) {
+    if (!vhrLinks[k]) { vhrLinks[k] = v; _seeded = true; }
+  }
+  if (_seeded) {
+    try { localStorage.setItem(VHR_KEY, JSON.stringify(vhrLinks)); } catch (e) {}
+  }
+  function getVhr(url) { return vhrLinks[url] || ''; }
+  function setVhr(url, vhr) {
+    if (vhr && vhr.trim()) vhrLinks[url] = vhr.trim();
+    else delete vhrLinks[url];
+    try { localStorage.setItem(VHR_KEY, JSON.stringify(vhrLinks)); } catch (e) {}
+    refreshVhrLinks();
+    refreshNoteButtons();
+    updateExportBtn();
+  }
+  function vhrBtnHtml(url) {
+    const v = getVhr(url);
+    if (!v) return '';
+    return `<a class="vhr-link" href="${esc(v)}" target="_blank" rel="noopener" title="Open CarFax / Vehicle History Report in new tab">🔍 VHR</a>`;
+  }
+  function vhrSlotHtml(url) {
+    return `<span class="vhr-slot" data-vhr-url="${esc(url)}">${vhrBtnHtml(url)}</span>`;
+  }
+  function refreshVhrLinks() {
+    document.querySelectorAll('.vhr-slot').forEach(span => {
+      span.innerHTML = vhrBtnHtml(span.dataset.vhrUrl);
+    });
+  }
+
+  // ── Ignored listings ─────────────────────────────────────────────────
+  const IGNORE_KEY = 'car-ignored-v1';
+  let ignored = new Set();
+  try { ignored = new Set(JSON.parse(localStorage.getItem(IGNORE_KEY) || '[]')); } catch (e) {}
+  function isIgnored(url) { return ignored.has(url); }
+  function toggleIgnore(url) {
+    if (ignored.has(url)) ignored.delete(url); else ignored.add(url);
+    try { localStorage.setItem(IGNORE_KEY, JSON.stringify([...ignored])); } catch (e) {}
+    refreshIgnoreUi();
+    matrixListeners.forEach(fn => { try { fn(); } catch (e) {} });   // re-render panels
+  }
+  function ignoreBtnHtml(url) {
+    const ig = isIgnored(url);
+    return `<button class="ignore-btn${ig ? ' ignored' : ''}" data-ignore-url="${esc(url)}" title="${ig ? 'Un-ignore — show normally' : 'Ignore — hide from view'}">${ig ? '🚫' : '👁'}</button>`;
+  }
+  function refreshIgnoreUi() {
+    document.querySelectorAll('button[data-ignore-url]').forEach(btn => {
+      const ig = isIgnored(btn.dataset.ignoreUrl);
+      btn.classList.toggle('ignored', ig);
+      btn.textContent = ig ? '🚫' : '👁';
+      btn.title = ig ? 'Un-ignore — show normally' : 'Ignore — hide from view';
+    });
+  }
+
+  // ── Report button + modal ───────────────────────────────────────────
+  function reportBtnHtml(url) {
+    return `<button class="report-btn" data-report-url="${esc(url)}" title="Open full single-car report (print-friendly)">📋</button>`;
+  }
+  function openReportModal(it, searchName) {
+    const total = totalPrice(it);
+    const dealerStr = it.seller_name
+      ? `${it.seller_name} (Grade ${it.grade || '?'}${it.rating != null ? `, ⭐${it.rating}/${(it.review_count||0).toLocaleString()}` : ''})`
+      : 'Private / unknown';
+    document.getElementById('report-title').textContent = (it.year ?? '?') + ' — ' + it.title;
+    document.getElementById('report-sub').innerHTML =
+      `${esc(searchName)} · <a href="${esc(it.url)}" target="_blank" rel="noopener">view listing ↗</a>${getVhr(it.url) ? ' · <a href="' + esc(getVhr(it.url)) + '" target="_blank" rel="noopener">CarFax VHR ↗</a>' : ''}`;
+
+    const body = document.getElementById('report-body');
+    const noteText = getNote(it.url);
+    const m = matchScore(it);
+    const ago = relativeAgo(payload.generated).text;
+    body.innerHTML = `
+      <div class="grid">
+        <span class="k">Source</span><span class="v">${esc(it.source || '—')} (scanned ${ago})</span>
+        <span class="k">Year</span><span class="v">${it.year ?? '?'}</span>
+        <span class="k">Odometer</span><span class="v">${fmtKm(it.km)}</span>
+        <span class="k">Sticker price</span><span class="v">${fmtMoney(it.price)}</span>
+        <span class="k">Out-the-door (est.)</span><span class="v">${total != null ? fmtMoney(total) : '—'}</span>
+        <span class="k">Deal score</span><span class="v">${fmtPct(it.deal_score)} vs market</span>
+        <span class="k">Seller</span><span class="v">${esc(dealerStr)}${it.brand_match ? ' · brand dealer' : ''}${it.is_cpo ? ' · CPO' : ''}</span>
+        <span class="k">Warranty</span><span class="v">${esc(it.warranty_label)} — ${esc(it.warranty_detail || '')}</span>
+        <span class="k">Location</span><span class="v">${esc(it.location || '—')}</span>
+        ${m != null ? `<span class="k">Personal match</span><span class="v">${m}% (based on your weights)</span>` : ''}
+        ${getVhr(it.url) ? `<span class="k">CarFax VHR</span><span class="v"><a href="${esc(getVhr(it.url))}" target="_blank" rel="noopener">${esc(getVhr(it.url))}</a></span>` : ''}
+        ${isIgnored(it.url) ? `<span class="k">Status</span><span class="v">🚫 IGNORED</span>` : ''}
+      </div>
+      ${noteText ? `<h3>📝 My notes</h3><div class="notes-block">${esc(noteText)}</div>` : ''}
+      <div id="report-attachments"></div>`;
+    document.getElementById('report-modal').classList.add('open');
+    // async-load attachments
+    listAttachments(it.url).then(atts => {
+      const div = document.getElementById('report-attachments');
+      if (!atts || !atts.length) return;
+      div.innerHTML = `<h3>📎 Attached documents (${atts.length})</h3>` +
+        atts.map(a => `<div class="file-line">• <strong>${esc(a.name)}</strong> <span style="color:#6b7280">(${fmtBytes(a.size)})</span></div>`).join('');
+    });
+  }
+  function closeReportModal() {
+    document.getElementById('report-modal').classList.remove('open');
+  }
+  document.getElementById('report-modal').addEventListener('click', e => {
+    if (e.target.matches('[data-close]')) closeReportModal();
+  });
+  document.getElementById('report-print').addEventListener('click', () => window.print());
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('report-modal').classList.contains('open')) {
+      closeReportModal();
+    }
+  });
 
   // ── Compare cart ─────────────────────────────────────────────────────
   const COMPARE_KEY = 'car-compare-v1';

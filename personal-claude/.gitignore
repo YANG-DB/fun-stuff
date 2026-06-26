@@ -1,0 +1,29 @@
+# ---- secrets / local environment (NEVER commit) ----
+.env
+.env.*
+!.env.example
+
+# ---- personal data: chat archives & exports ----
+exports/
+
+# ---- per-profile local data (in case it's ever placed in-repo) ----
+data/
+*.db
+*.sqlite
+*.sqlite*
+profiles.md
+
+# ---- dependencies & build output ----
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# ---- logs & OS / editor junk ----
+*.log
+npm-debug.log*
+.DS_Store
+._*
+.idea/
+.vscode/
