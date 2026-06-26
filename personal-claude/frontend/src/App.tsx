@@ -16,6 +16,7 @@ export function App() {
   const [mainView, setMainView] = useState<"explore" | "chat">("explore");
   const [exploreTab, setExploreTab] = useState<ExploreTab>("calendar");
   const [pipelineConvId, setPipelineConvId] = useState<string | null>(null);
+  const [sidebar, setSidebar] = useState<"normal" | "hidden" | "full">("normal");
   // Where to return when leaving a conversation (the screen we came from).
   const [returnTo, setReturnTo] = useState<"explore" | null>("explore");
 
@@ -65,32 +66,45 @@ export function App() {
 
   return (
     <div
-      className="app"
+      className={`app sb-${sidebar}`}
       style={{ ["--accent" as string]: activeProfile.color }}
     >
-      <Sidebar
-        activeConversationId={mainView === "chat" ? activeConversationId : null}
-        exploring={mainView === "explore"}
-        onSelectConversation={openConversation}
-        onExplore={() => setMainView("explore")}
-        inPipeline={mainView === "explore" && exploreTab === "pipeline"}
-        onShowInPipeline={showInPipeline}
-      />
-      {mainView === "explore" ? (
-        <Explore
-          onOpenChat={openConversation}
-          tab={exploreTab}
-          onTabChange={setExploreTab}
-          pipelineConvId={pipelineConvId}
-          onPipelineSelect={setPipelineConvId}
+      {sidebar !== "hidden" && (
+        <Sidebar
+          activeConversationId={mainView === "chat" ? activeConversationId : null}
+          exploring={mainView === "explore"}
+          onSelectConversation={(id) => {
+            if (sidebar === "full") setSidebar("normal"); // collapse the full panel when opening a chat
+            openConversation(id);
+          }}
+          onExplore={() => setMainView("explore")}
+          inPipeline={mainView === "explore" && exploreTab === "pipeline"}
+          onShowInPipeline={showInPipeline}
+          sidebarMode={sidebar}
+          setSidebarMode={setSidebar}
         />
-      ) : (
-        <ChatView
-          key={activeConversationId ?? "empty"}
-          conversationId={activeConversationId}
-          onConversationCreated={openConversation}
-          onBack={returnTo === "explore" ? () => setMainView("explore") : undefined}
-        />
+      )}
+      {sidebar !== "full" &&
+        (mainView === "explore" ? (
+          <Explore
+            onOpenChat={openConversation}
+            tab={exploreTab}
+            onTabChange={setExploreTab}
+            pipelineConvId={pipelineConvId}
+            onPipelineSelect={setPipelineConvId}
+          />
+        ) : (
+          <ChatView
+            key={activeConversationId ?? "empty"}
+            conversationId={activeConversationId}
+            onConversationCreated={openConversation}
+            onBack={returnTo === "explore" ? () => setMainView("explore") : undefined}
+          />
+        ))}
+      {sidebar === "hidden" && (
+        <button className="sb-reveal" title="Show chats panel" onClick={() => setSidebar("normal")}>
+          ☰
+        </button>
       )}
       <ReminderAlerts />
     </div>

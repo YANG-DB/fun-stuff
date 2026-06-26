@@ -444,6 +444,28 @@ select {
   grid-template-columns: 300px 1fr;
   height: 100%;
 }
+/* left chats panel: full screen · normal pane · hidden */
+.app.sb-normal { grid-template-columns: 300px 1fr; }
+.app.sb-hidden { grid-template-columns: 1fr; }
+.app.sb-full { grid-template-columns: 1fr; }
+.sb-reveal {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 50;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 16px;
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+}
+.sb-reveal:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ===== Sidebar ===== */
 .sidebar {
@@ -1513,6 +1535,38 @@ select {
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
 }
+
+/* wide, rectangular profile settings dialog (two columns, scrolls) */
+.profile-modal {
+  max-width: 880px;
+  width: 94vw;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.profile-modal .modal-head {
+  flex-shrink: 0;
+}
+.ps-grid {
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+.ps-grid > .settings-section {
+  min-width: 0;
+}
+.ps-grid > .settings-section:nth-child(odd) {
+  border-right: 1px solid var(--border);
+}
+@media (max-width: 720px) {
+  .ps-grid {
+    grid-template-columns: 1fr;
+  }
+  .ps-grid > .settings-section:nth-child(odd) {
+    border-right: none;
+  }
+}
 .settings-section:last-child {
   border-bottom: none;
 }
@@ -2009,6 +2063,43 @@ select {
 .pf-rel-shared b { color: var(--accent); }
 .pf-ltm-item {
   margin-bottom: 4px;
+}
+
+/* knowledge-graph topic explorer */
+.kg-pick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin: 2px 4px 8px;
+}
+.kg-pick-head .gtable-filter {
+  max-width: 220px;
+  flex: 0 1 220px;
+}
+.kg-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  margin: 2px 4px 8px;
+  color: var(--text-faint);
+}
+.kg-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.kg-current {
+  font-weight: 700;
+  color: var(--accent);
+}
+.kg-back {
+  margin-left: auto;
 }
 
 /* explore: graph ⇄ table toggle + table views */
@@ -2842,10 +2933,44 @@ select {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
+.cal-cell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .cal-day {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-dim);
+}
+.cal-add {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 1px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.cal-cell:hover .cal-add {
+  opacity: 1;
+}
+.cal-add:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.cal-add-modal {
+  width: min(440px, 92vw);
+}
+.cal-add-row {
+  display: flex;
+  gap: 12px;
+}
+.cal-add-row .field {
+  flex: 1;
 }
 .cal-chips {
   display: flex;

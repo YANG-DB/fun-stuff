@@ -21,10 +21,11 @@ import {
   Clock,
   Brain,
   Check,
+  Plus,
 } from "lucide-react";
 import { useStore } from "../store";
 import { forceLayout, relTime, occurrencesInRange } from "../utils";
-import type { Conversation } from "../types";
+import type { Conversation, Repeat } from "../types";
 import { ImportArchive } from "./ImportArchive";
 
 function cleanSnippet(s: string, n = 150): string {
@@ -483,8 +484,26 @@ function byDayMap(chats: Conversation[]) {
 // ---- Calendar (month grid) ------------------------------------------------
 
 function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: string) => void }) {
-  const { reminders, toggleReminder } = useStore();
+  const { reminders, toggleReminder, addReminder, activeProfile } = useStore();
   const [off, setOff] = useState(0);
+  const [addDay, setAddDay] = useState<number | null>(null); // start-of-day ts being added to
+  const [aText, setAText] = useState("");
+  const [aTime, setATime] = useState("09:00");
+  const [aRepeat, setARepeat] = useState<Repeat>("none");
+  const openAdd = (k: number) => {
+    setAddDay(k);
+    setAText("");
+    setATime("09:00");
+    setARepeat("none");
+  };
+  const submitAdd = () => {
+    if (!aText.trim() || addDay == null || !activeProfile) return;
+    const due = new Date(addDay);
+    const [h, m] = aTime.split(":");
+    due.setHours(Number(h) || 9, Number(m) || 0, 0, 0);
+    addReminder({ profileId: activeProfile.id, text: aText.trim(), dueAt: due.getTime(), done: false, repeat: aRepeat });
+    setAddDay(null);
+  };
   const base = new Date();
   base.setDate(1);
   base.setMonth(base.getMonth() + off);
@@ -535,7 +554,12 @@ function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: s
           const list = map.get(k) || [];
           return (
             <div key={i} className={`cal-cell ${k === today ? "today" : ""}`}>
-              <span className="cal-day">{d}</span>
+              <div className="cal-cell-head">
+                <span className="cal-day">{d}</span>
+                <button className="cal-add" title="Add task / reminder" onClick={() => openAdd(k)}>
+                  <Plus size={13} />
+                </button>
+              </div>
               <div className="cal-chips">
                 {list.slice(0, 3).map((c) => (
                   <button
@@ -564,6 +588,51 @@ function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: s
           );
         })}
       </div>
+
+      {addDay != null && (
+        <div className="modal-backdrop" onClick={() => setAddDay(null)}>
+          <div className="modal cal-add-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-head">
+              <h3>
+                <CalIcon size={16} /> Add for {new Date(addDay).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+              </h3>
+              <button className="icon-btn" onClick={() => setAddDay(null)} aria-label="close"><X size={18} /></button>
+            </header>
+            <section className="settings-section">
+              <label className="field">
+                <span>Task / reminder</span>
+                <input
+                  autoFocus
+                  value={aText}
+                  onChange={(e) => setAText(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdd()}
+                  placeholder="e.g. Pay rent, Dentist appointment…"
+                />
+              </label>
+              <div className="cal-add-row">
+                <label className="field">
+                  <span>Time</span>
+                  <input type="time" value={aTime} onChange={(e) => setATime(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Repeat</span>
+                  <select value={aRepeat} onChange={(e) => setARepeat(e.target.value as Repeat)}>
+                    {(["none", "daily", "weekly", "monthly", "yearly"] as Repeat[]).map((r) => (
+                      <option key={r} value={r}>{r === "none" ? "Doesn't repeat" : `Repeats ${r}`}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="editor-actions">
+                <button className="btn-secondary" onClick={() => setAddDay(null)}>Cancel</button>
+                <button className="new-chat-btn" style={{ margin: 0 }} disabled={!aText.trim()} onClick={submitAdd}>
+                  <Plus size={15} /> Add
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1530,170 +1599,173 @@ function ClusterConvosPanel({
   );
 }
 
+// Knowledge graph as a topic-rooted explorer: pick a topic, see its related
+// topics + conversations, then click onward to walk the graph.
 function ChatGraphView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: string) => void }) {
-  const { continueCluster } = useStore();
-  const [mode, setMode] = useState<"graph" | "table">("graph");
+  const [root, setRoot] = useState<string | null>(null);
+  const [history, setHistory] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
-  const [selectedCluster, setSelectedCluster] = useState<number | null>(null);
-  const [menu, setMenu] = useState<ClusterMenuState | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [zoom, setZoom] = useState<{ ids: string[]; nonce: number } | null>(null);
-  const [panel, setPanel] = useState<{ chatIds: string[]; label: string } | null>(null);
-  const { nodes, edges, table, clusterOf, members, clusterLabels } = useMemo(() => {
-    const edges: GEdge[] = [];
-    for (let i = 0; i < chats.length; i++) {
-      for (let j = i + 1; j < chats.length; j++) {
-        const shared = chats[i].concepts.filter((k) => chats[j].concepts.includes(k));
-        if (shared.length) edges.push({ a: chats[i].id, b: chats[j].id, w: shared.length });
-      }
+
+  const data = useMemo(() => {
+    const live = chats.filter((c) => !c.deleted && c.messages.length > 0);
+    const topicChats = new Map<string, Conversation[]>();
+    const co = new Map<string, number>(); // "a|b" → shared-conversation count
+    for (const c of live) {
+      const cs = [...new Set(c.concepts)];
+      for (const k of cs) (topicChats.get(k) ?? topicChats.set(k, []).get(k)!).push(c);
+      for (let i = 0; i < cs.length; i++)
+        for (let j = i + 1; j < cs.length; j++) {
+          const key = cs[i] < cs[j] ? `${cs[i]}|${cs[j]}` : `${cs[j]}|${cs[i]}`;
+          co.set(key, (co.get(key) || 0) + 1);
+        }
     }
-    // cluster related conversations together
-    const clusterOf = clusterize(chats.map((c) => c.id), edges);
-    const members: Record<number, string[]> = {};
-    for (const [id, c] of clusterOf) (members[c] ??= []).push(id);
-    const objToId: Record<string, Conversation> = Object.fromEntries(chats.map((c) => [c.id, c]));
-    // name each cluster by its most common concept
-    const clusterLabels: Record<number, string> = {};
-    for (const [cl, ids] of Object.entries(members)) {
-      const cnt = new Map<string, number>();
-      for (const id of ids) for (const k of objToId[id]?.concepts || []) cnt.set(k, (cnt.get(k) || 0) + 1);
-      const top = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0];
-      clusterLabels[Number(cl)] = top ? top[0] : `Cluster ${Number(cl) + 1}`;
+    const adj = new Map<string, { topic: string; w: number }[]>();
+    for (const [key, w] of co) {
+      const [a, b] = key.split("|");
+      (adj.get(a) ?? adj.set(a, []).get(a)!).push({ topic: b, w });
+      (adj.get(b) ?? adj.set(b, []).get(b)!).push({ topic: a, w });
     }
-    const nodes: GNode[] = chats.map((c) => {
-      const cl = clusterOf.get(c.id)!;
-      const clustered = (members[cl]?.length || 0) >= 2;
-      return {
-        id: c.id,
-        label: c.title.length > 18 ? c.title.slice(0, 16) + "…" : c.title,
-        color: clustered ? clusterColor(cl) : colorFor(c.concepts[0] || c.title),
-        r: 5 + Math.min(c.messages.length, 10) * 0.7,
-        time: c.updatedAt,
-        weight: c.messages.length, // amount of conversation
-      };
-    });
-    // Adjacency from edges → per-conversation "related to" + connection strength.
-    const titleOf: Record<string, string> = Object.fromEntries(chats.map((c) => [c.id, c.title]));
-    const adj: Record<string, { id: string; w: number }[]> = {};
-    for (const e of edges) {
-      (adj[e.a] ??= []).push({ id: e.b, w: e.w });
-      (adj[e.b] ??= []).push({ id: e.a, w: e.w });
-    }
-    const table = chats
-      .map((c) => {
-        const ns = (adj[c.id] || []).slice().sort((a, b) => b.w - a.w);
-        return {
-          id: c.id,
-          cluster: clusterOf.get(c.id)!,
-          title: c.title,
-          links: ns.length,
-          strength: ns.reduce((s, x) => s + x.w, 0), // total shared-concept weight
-          related: ns.slice(0, 3).map((x) => ({ title: titleOf[x.id] || "?", w: x.w })),
-        };
-      })
-      .sort((a, b) => a.cluster - b.cluster || b.strength - a.strength || b.links - a.links);
-    const clusterObj: Record<string, number> = Object.fromEntries(clusterOf);
-    return { nodes, edges, table, clusterOf: clusterObj, members, clusterLabels };
+    const topics = [...topicChats.keys()]
+      .map((t) => ({ topic: t, sessions: topicChats.get(t)!.length, links: adj.get(t)?.length || 0 }))
+      .sort((a, b) => b.sessions - a.sessions || a.topic.localeCompare(b.topic));
+    return { topicChats, adj, topics };
   }, [chats]);
 
-  const preview = chats.find((c) => c.id === previewId) || null;
+  const goTo = (t: string) => {
+    setHistory((h) => (root ? [...h, root] : h));
+    setRoot(t);
+    setPreviewId(null);
+  };
+  const jumpTo = (i: number) => {
+    const t = history[i];
+    setHistory(history.slice(0, i));
+    setRoot(t);
+    setPreviewId(null);
+  };
+  const back = () =>
+    setHistory((h) => {
+      const n = [...h];
+      const prev = n.pop();
+      setRoot(prev ?? null);
+      setPreviewId(null);
+      return n;
+    });
+  const reset = () => {
+    setRoot(null);
+    setHistory([]);
+    setPreviewId(null);
+  };
 
-  const openMenu = (_nodeId: string, clusterId: number, x: number, y: number) => {
-    const ids = clusterId >= 0 ? members[clusterId] || [] : [_nodeId];
-    const concepts = new Map<string, number>();
-    for (const id of ids) {
-      const c = chats.find((ch) => ch.id === id);
-      for (const k of c?.concepts || []) concepts.set(k, (concepts.get(k) || 0) + 1);
+  const graph = useMemo(() => {
+    const nodes: GNode[] = [];
+    const edges: GEdge[] = [];
+    if (!root) return { nodes, edges };
+    const rootChats = (data.topicChats.get(root) || []).slice().sort((a, b) => b.updatedAt - a.updatedAt);
+    nodes.push({
+      id: `t:${root}`,
+      label: root,
+      color: colorFor(root),
+      r: 24,
+      sub: `${rootChats.length} session${rootChats.length === 1 ? "" : "s"}`,
+    });
+    for (const { topic, w } of (data.adj.get(root) || []).slice().sort((a, b) => b.w - a.w).slice(0, 12)) {
+      nodes.push({
+        id: `t:${topic}`,
+        label: topic,
+        color: colorFor(topic),
+        r: 10 + Math.min(w, 8),
+        sub: `${data.topicChats.get(topic)?.length || 0} sessions · ${w} shared`,
+      });
+      edges.push({ a: `t:${root}`, b: `t:${topic}`, w });
     }
-    const top = [...concepts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
-    const label = top.length ? `Cluster: ${top.join(" · ")}` : `${ids.length} related conversations`;
-    setMenu({ x, y, nodeIds: ids, chatIds: ids, label });
-  };
-  const doZoom = () => {
-    if (!menu) return;
-    setZoom((z) => ({ ids: menu.nodeIds, nonce: (z?.nonce || 0) + 1 }));
-    setPanel({ chatIds: menu.chatIds, label: menu.label });
-    setMenu(null);
-  };
-  const continueWith = async (chatIds: string[], label: string) => {
-    setBusy(true);
-    try {
-      const conv = await continueCluster(chatIds, label.replace(/^Cluster:\s*/, ""));
-      setMenu(null);
-      setPanel(null);
-      onOpen(conv.id);
-    } finally {
-      setBusy(false);
+    for (const c of rootChats.slice(0, 14)) {
+      nodes.push({
+        id: `c:${c.id}`,
+        label: c.title.length > 18 ? c.title.slice(0, 16) + "…" : c.title,
+        color: colorFor(c.concepts[0] || c.title),
+        r: 5 + Math.min(c.messages.length, 10) * 0.5,
+        time: c.updatedAt,
+        weight: c.messages.length,
+      });
+      edges.push({ a: `t:${root}`, b: `c:${c.id}`, w: 1 });
     }
-  };
-  const doContinue = () => menu && continueWith(menu.chatIds, menu.label);
-  const panelConvos = panel ? chats.filter((c) => panel.chatIds.includes(c.id)) : [];
+    return { nodes, edges };
+  }, [root, data]);
 
+  const onSelect = (id: string) => {
+    if (id.startsWith("t:")) {
+      const t = id.slice(2);
+      if (t !== root) goTo(t);
+    } else if (id.startsWith("c:")) {
+      setPreviewId(id.slice(2));
+    }
+  };
+  const preview = previewId ? chats.find((c) => c.id === previewId) || null : null;
+
+  // --- topic picker (entry point) ---
+  if (!root) {
+    const q = query.trim().toLowerCase();
+    const list = q ? data.topics.filter((t) => t.topic.toLowerCase().includes(q)) : data.topics;
+    return (
+      <div className="gview">
+        <div className="kg-pick-head">
+          <span>Pick a topic to explore its related topics &amp; conversations</span>
+          <input className="gtable-filter" placeholder="filter topics…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <div className="gtable">
+          <div className="gtable-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Topic</th>
+                  <th className="gt-num">Sessions</th>
+                  <th className="gt-num">Related</th>
+                  <th className="gt-num"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((t) => (
+                  <tr key={t.topic} onClick={() => goTo(t.topic)} title="Explore this topic">
+                    <td className="gt-name"><span className="gt-dot" style={{ background: colorFor(t.topic) }} />{t.topic}</td>
+                    <td className="gt-num">{t.sessions}</td>
+                    <td className="gt-num">{t.links}</td>
+                    <td className="gt-num"><ArrowRight size={14} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- exploration view (rooted at `root`) ---
   return (
     <div className="gview">
-      <GraphModeToggle mode={mode} setMode={setMode} />
-      {mode === "graph" ? (
-        <ForceGraph
-          nodes={nodes}
-          edges={edges}
-          onSelect={setPreviewId}
-          activeId={previewId}
-          clusterOf={clusterOf}
-          clusterLabels={clusterLabels}
-          selectedCluster={selectedCluster}
-          onSelectCluster={setSelectedCluster}
-          onContextMenu={openMenu}
-          zoomIds={zoom?.ids}
-          zoomNonce={zoom?.nonce}
-          hint="Hover a cluster label to highlight it · click to select · right-click → Zoom in / Continue conversation."
-          overlay={
-            <>
-              {preview && (
-                <ChatPreview chat={preview} onOpen={() => onOpen(preview.id)} onClose={() => setPreviewId(null)} />
-              )}
-              {panel && !preview && (
-                <ClusterConvosPanel
-                  label={panel.label}
-                  convos={panelConvos}
-                  onOpen={onOpen}
-                  onContinue={() => continueWith(panel.chatIds, panel.label)}
-                  busy={busy}
-                  onClose={() => setPanel(null)}
-                />
-              )}
-            </>
-          }
-        />
-      ) : (
-        <ClusterTable
-          rows={table}
-          rowKey={(r) => r.id}
-          clusterOf={(r) => r.cluster}
-          clusterName={(c) => clusterLabels[c] || `Cluster ${c + 1}`}
-          clusterColorOf={(c) => ((members[c]?.length || 0) >= 2 ? clusterColor(c) : "var(--text-faint)")}
-          onRowClick={(r) => onOpen(r.id)}
-          columns={[
-            { key: "title", label: "Conversation", sortVal: (r) => r.title, cell: (r) => r.title },
-            {
-              key: "related",
-              label: "Related to",
-              sortVal: (r) => r.related.length,
-              cell: (r) =>
-                r.related.length ? (
-                  <span className="gt-rel">
-                    {r.related.map((x, i) => (
-                      <span key={i} className="gt-chip">{x.title} <b>{x.w}</b></span>
-                    ))}
-                  </span>
-                ) : "—",
-              agg: (rows) => `${rows.length} chats`,
-            },
-            { key: "strength", label: "Strength", num: true, sortVal: (r) => r.strength, cell: (r) => r.strength, agg: (rows) => rows.reduce((s, r) => s + r.strength, 0) },
-            { key: "links", label: "Links", num: true, sortVal: (r) => r.links, cell: (r) => r.links, agg: (rows) => rows.reduce((s, r) => s + r.links, 0) },
-          ]}
-        />
-      )}
-      <ClusterMenu menu={menu} busy={busy} onZoom={doZoom} onContinue={doContinue} onClose={() => setMenu(null)} />
+      <div className="kg-crumbs">
+        <button className="link-btn" onClick={reset}>Topics</button>
+        {history.map((h, i) => (
+          <span key={i} className="kg-crumb">
+            <ChevronRight size={12} />
+            <button className="link-btn" onClick={() => jumpTo(i)}>{h}</button>
+          </span>
+        ))}
+        <ChevronRight size={12} />
+        <span className="kg-current">#{root}</span>
+        {history.length > 0 && (
+          <button className="btn-secondary kg-back" onClick={back}>Back</button>
+        )}
+      </div>
+      <ForceGraph
+        nodes={graph.nodes}
+        edges={graph.edges}
+        onSelect={onSelect}
+        activeId={preview ? `c:${preview.id}` : `t:${root}`}
+        hint="Click a related topic to explore it · click a conversation to preview · drag / scroll to move."
+        overlay={preview && <ChatPreview chat={preview} onOpen={() => onOpen(preview.id)} onClose={() => setPreviewId(null)} />}
+      />
     </div>
   );
 }

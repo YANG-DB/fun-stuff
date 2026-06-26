@@ -17,6 +17,8 @@ import {
   CheckSquare,
   Square,
   Maximize2,
+  Minimize2,
+  PanelLeftClose,
   X,
   ArrowRight,
   Workflow,
@@ -41,6 +43,8 @@ interface Props {
   onExplore: () => void;
   inPipeline?: boolean;
   onShowInPipeline?: (id: string) => void;
+  sidebarMode?: "normal" | "hidden" | "full";
+  setSidebarMode?: (m: "normal" | "hidden" | "full") => void;
 }
 
 export function Sidebar({
@@ -50,6 +54,8 @@ export function Sidebar({
   onExplore,
   inPipeline,
   onShowInPipeline,
+  sidebarMode,
+  setSidebarMode,
 }: Props) {
   const store = useStore();
   const { activeProfile } = store;
@@ -113,6 +119,24 @@ export function Sidebar({
         >
           <LogOut size={16} />
         </button>
+        {setSidebarMode && (
+          <>
+            <button
+              className="icon-btn"
+              title={sidebarMode === "full" ? "Restore panel" : "Expand panel full screen"}
+              onClick={() => setSidebarMode(sidebarMode === "full" ? "normal" : "full")}
+            >
+              {sidebarMode === "full" ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+            <button
+              className="icon-btn"
+              title="Hide panel"
+              onClick={() => setSidebarMode("hidden")}
+            >
+              <PanelLeftClose size={16} />
+            </button>
+          </>
+        )}
       </div>
 
       {showSettings && <ProfileSettings onClose={() => setShowSettings(false)} />}

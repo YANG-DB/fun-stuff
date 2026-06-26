@@ -11,6 +11,7 @@ import {
   notesMd,
   remindersMd,
   memoryMd,
+  exportProfile,
 } from "../services/exportData";
 import {
   demoConnect,
@@ -22,7 +23,7 @@ import {
 // Google). Identity only — used to label the profile with a real account; no
 // Google API scopes are requested.
 export function ProfileSettings({ onClose }: { onClose: () => void }) {
-  const { activeProfile, updateProfile, reload, notes, reminders, memory, memoryFiles } = useStore();
+  const { activeProfile, updateProfile, reload, notes, reminders, memory, memoryFiles, conversations } = useStore();
   const profile = activeProfile!;
   const btnRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -82,6 +83,27 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
     reminders: reminders.filter((r) => r.profileId === profile.id),
     memory: memory.filter((m) => m.profileId === profile.id),
   };
+  const profileBundle = () => ({
+    name: profile.name,
+    tagline: profile.tagline,
+    persona: profile.persona,
+    model: profile.defaultModel,
+    google: profile.google ? { email: profile.google.email, name: profile.google.name } : null,
+    allowedEmails: profile.allowedEmails || [],
+    budgetUsd: profile.budgetUsd,
+    spentUsd: profile.spentUsd,
+    tokens: profile.tokens,
+    details,
+    context: ctx,
+    ltm: memoryFiles.ltm,
+    stm: memoryFiles.stm,
+    notes: bundle.notes,
+    reminders: bundle.reminders,
+    memory: bundle.memory,
+    conversations: conversations
+      .filter((c) => c.profileId === profile.id && !c.deleted)
+      .map((c) => ({ title: c.title, source: c.source, summary: c.summary, concepts: c.concepts, updatedAt: c.updatedAt, messages: c.messages.length })),
+  });
 
   function saveEmails() {
     const list = emails
@@ -124,7 +146,7 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal profile-modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h3>
             <span className="modal-avatar">{profile.avatar}</span>
@@ -135,6 +157,7 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
           </button>
         </header>
 
+        <div className="ps-grid">
         <section className="settings-section">
           <div className="settings-label">Google account</div>
           <p className="settings-hint">
@@ -429,6 +452,18 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
               <Download size={14} /> Memory
             </button>
           </div>
+          <div className="settings-sublabel">Full profile</div>
+          <div className="export-row">
+            <button className="btn-secondary" onClick={() => exportProfile(profileBundle(), "json")}>
+              <Download size={14} /> JSON
+            </button>
+            <button className="btn-secondary" onClick={() => exportProfile(profileBundle(), "md")}>
+              <Download size={14} /> Markdown
+            </button>
+            <button className="btn-secondary" onClick={() => exportProfile(profileBundle(), "pdf")}>
+              <Download size={14} /> PDF
+            </button>
+          </div>
         </section>
 
         <section className="settings-section">
@@ -467,6 +502,7 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
           <div className="settings-label">Persona</div>
           <p className="settings-persona">{profile.persona}</p>
         </section>
+        </div>
       </div>
     </div>
   );

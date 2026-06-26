@@ -72,8 +72,13 @@ is never silently lost.
 - **Per-profile access control:** an optional allowed-emails list restricts a
   profile to specific Google accounts (empty = open to anyone signed in).
 - **Per-profile settings:** default model, thinking, effort, web tools, memory
-  tool, persona — all editable in ⚙ settings.
+  tool, persona — all editable in a wide two-column ⚙ settings dialog.
+- **Full-profile export** (⚙ → Export data → Full profile): **JSON / Markdown /
+  PDF** bundling meta, personal details, user context, LTM/STM, memory, notes,
+  reminders, and a conversations index.
 - **Token counters:** per-conversation and aggregate-per-profile token usage.
+- **Resizable left panel:** the chats panel toggles between **full screen**,
+  the normal pane, and **hidden** (a floating ☰ reveals it again).
 
 ---
 
@@ -235,10 +240,14 @@ Sidebar ([`Sidebar`](frontend/src/components/Sidebar.tsx)):
 [`Explore`](frontend/src/components/Explore.tsx) has five tabs. Soft-deleted and
 empty conversations are excluded from all of them.
 
-- **Calendar** — month grid of conversations + reminders (recurring reminders are
-  expanded across the month).
+- **Calendar** — month grid of conversations + reminders; **hover a day and click
+  `＋`** to add a task/reminder (date + time + recurrence). Recurring reminders are
+  expanded across the month.
 - **This week** — recent week, day columns.
-- **Knowledge graph** — conversations as nodes, edges = shared concepts.
+- **Knowledge graph** — a **topic-rooted explorer**: pick a topic from a table,
+  then see it centered with its **related topics** (co-occurring) and its
+  **conversations**; click a related topic to re-center and walk outward, with
+  **breadcrumbs** + back. Click a conversation to preview/open.
 - **Topics** — topics as nodes sized by centrality (**defaults to the Table view**).
 - **Pipeline** — the processing flow (see §14).
 
@@ -247,9 +256,10 @@ empty conversations are excluded from all of them.
 activity histogram** (temporal fade), flat color-by-cluster nodes, straight light
 edges, and always-on labels.
 
-**Graph ⇄ Table toggle** on Knowledge graph & Topics. The table is **grouped by
-cluster** with **collapsible cluster rows** (a collapsed cluster shows one
-aggregate row), **sortable columns** (click headers), and a **filter** box.
+**Graph ⇄ Table toggle** on the Topics view (and the Knowledge graph's topic
+picker is itself a table). Tables are **grouped by cluster** with **collapsible
+cluster rows** (a collapsed cluster shows one aggregate row), **sortable columns**
+(click headers), and a **filter** box.
 
 ---
 
@@ -293,7 +303,8 @@ Conversation → Summarize → Topics extract ─┬─→ Knowledge graph
 ## 15. Reminders & calendar events
 
 - **Add** a task/event with **date + time** and a **recurrence** (none / daily /
-  weekly / monthly / yearly).
+  weekly / monthly / yearly) — from the **Reminders tab** or directly from the
+  **Calendar** (hover a day → `＋`).
 - **Recurring** reminders **roll forward** to the next occurrence when completed
   (in the list and in the due-popup); the Calendar **expands** all occurrences
   across the visible month.
