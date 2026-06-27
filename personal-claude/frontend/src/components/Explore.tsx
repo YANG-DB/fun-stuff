@@ -25,6 +25,7 @@ import {
   Plus,
   Mail,
   Bell,
+  Search,
 } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../services/api";
@@ -36,7 +37,7 @@ function cleanSnippet(s: string, n = 150): string {
   return s.replace(/[#*`>_]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 }
 
-export type ExploreTab = "calendar" | "weekly" | "graph" | "topics" | "pipeline";
+export type ExploreTab = "calendar" | "weekly" | "graph" | "topics" | "pipeline" | "emails";
 
 const PALETTE = [
   "#D97757", "#7C6FF0", "#3BA776", "#E0903C",
@@ -153,6 +154,7 @@ export function Explore({
           <TabBtn on={tab === "graph"} onClick={() => onTabChange("graph")} icon={<Network size={15} />} label="Knowledge graph" />
           <TabBtn on={tab === "topics"} onClick={() => onTabChange("topics")} icon={<Flame size={15} />} label="Topics" />
           <TabBtn on={tab === "pipeline"} onClick={() => onTabChange("pipeline")} icon={<Workflow size={15} />} label="Pipeline" />
+          <TabBtn on={tab === "emails"} onClick={() => onTabChange("emails")} icon={<Mail size={15} />} label="Emails" />
         </nav>
         <div className="explore-head-actions">
           <button className="btn-secondary" onClick={() => setImporting(true)}>
@@ -174,6 +176,8 @@ export function Explore({
             selectedId={pipelineConvId}
             onSelectId={onPipelineSelect}
           />
+        ) : tab === "emails" ? (
+          <EmailsView onOpen={onOpenChat} />
         ) : conversations.length === 0 ? (
           <div className="explore-empty">
             <div className="boot-mark">◆</div>
@@ -209,6 +213,102 @@ function TabBtn(props: { on: boolean; onClick: () => void; icon: React.ReactNode
   );
 }
 
+// ---- Emails (browse synced/imported mail) ---------------------------------
+
+function EmailsView({ onOpen }: { onOpen: (id: string) => void }) {
+  const { activeProfile, reminders, notes, seedConversation, addReminder } = useStore();
+  const [emails, setEmails] = useState<{ id: string; ts: number; from: string; subject: string; snippet: string; source: string }[]>([]);
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [tasked, setTasked] = useState<Set<string>>(new Set());
+
+  type EV = { id: string; ts: number; from: string; subject: string; snippet: string; source: string };
+  const discuss = async (e: EV) => {
+    const body = `📧 **${e.subject || "(no subject)"}**\nFrom: ${e.from}${e.ts ? ` · ${new Date(e.ts).toLocaleDateString()}` : ""}\n\n${e.snippet}\n\n_Ask me anything about this email._`;
+    const c = await seedConversation((e.subject || "Email").slice(0, 60), body);
+    onOpen(c.id);
+  };
+  const makeTask = (e: EV) => {
+    if (!activeProfile) return;
+    addReminder({ profileId: activeProfile.id, text: `✉️ ${e.subject || "Email"}`, dueAt: Date.now() + 2 * 86_400_000, done: false, repeat: "none" });
+    setTasked((s) => new Set(s).add(e.id));
+  };
+
+  useEffect(() => {
+    if (!activeProfile) return;
+    setLoading(true);
+    api.listEmails(activeProfile.id).then((r) => setEmails(r.emails)).catch(() => {}).finally(() => setLoading(false));
+  }, [activeProfile?.id]);
+
+  const digest = notes.find((n) => /Inbox digest/.test(n.title))?.body;
+  const tasks = reminders.filter((r) => r.source === "gmail").sort((a, b) => Number(a.done) - Number(b.done) || a.dueAt - b.dueAt);
+  const ql = q.trim().toLowerCase();
+  const filtered = ql
+    ? emails.filter((e) => `${e.subject} ${e.from} ${e.snippet}`.toLowerCase().includes(ql))
+    : emails;
+
+  return (
+    <div className="emails-view">
+      <div className="ev-bar">
+        <div className="sb-search ev-search">
+          <Search size={14} />
+          <input placeholder="Search email…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <span className="ev-count">{filtered.length} / {emails.length} emails</span>
+      </div>
+      <div className="ev-body">
+        {digest && (
+          <div className="pf-digest"><b>📥 Inbox digest</b><p>{digest}</p></div>
+        )}
+        {tasks.length > 0 && (
+          <>
+            <div className="pf-sec-h">Action items <span className="pf-count">{tasks.length}</span></div>
+            <ul className="pf-rem-list">
+              {tasks.map((r) => (
+                <li key={r.id} className={r.done ? "done" : ""}>
+                  <span className="pf-rem-text">{r.text}</span>
+                  <span className="pf-rem-due">{new Date(r.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <div className="pf-sec-h">Emails <span className="pf-count">{emails.length}</span></div>
+        {loading ? (
+          <div className="lookup-muted">Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div className="lookup-muted">
+            {emails.length === 0
+              ? "No emails yet — connect Gmail (⚙ → Gmail & Calendar) or import a Takeout .mbox, then sync."
+              : "No emails match your search."}
+          </div>
+        ) : (
+          <ul className="pf-email-list ev-list">
+            {filtered.map((e) => (
+              <li key={e.id}>
+                <div className="pf-email-top">
+                  <span className="pf-email-subj">{e.subject || "(no subject)"}</span>
+                  <span className="pf-rem-due">{e.ts ? new Date(e.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>
+                </div>
+                {e.from && <div className="pf-email-from">{e.from}</div>}
+                {e.snippet && <div className="pf-email-snip">{e.snippet}</div>}
+                <div className="ev-actions">
+                  <button onClick={() => discuss(e)} title="Open a conversation about this email">
+                    <MessageSquarePlus size={13} /> Discuss
+                  </button>
+                  <button onClick={() => makeTask(e)} disabled={tasked.has(e.id)} title="Create a task / reminder">
+                    {tasked.has(e.id) ? <><Check size={13} /> Task added</> : <><Plus size={13} /> Task</>}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---- Pipeline: the dynamic flow every conversation travels -----------------
 
 const DAY_MS = 86_400_000;
@@ -239,13 +339,9 @@ function PipelineFlow({
   selectedId?: string | null;
   onSelectId?: (id: string) => void;
 }) {
-  const { memory, memoryFiles, notes, reminders, toggleReminder, activeProfile } = useStore();
+  const { memory, memoryFiles, notes, reminders, toggleReminder } = useStore();
   const [localSel, setLocalSel] = useState<string | null>(null);
-  const [detail, setDetail] = useState<null | "stm" | "ltm" | "reminders" | "gmail">(null);
-  const [emails, setEmails] = useState<{ id: string; ts: number; from: string; subject: string; snippet: string; source: string }[]>([]);
-  useEffect(() => {
-    if (detail === "gmail" && activeProfile) api.listEmails(activeProfile.id).then((r) => setEmails(r.emails)).catch(() => {});
-  }, [detail, activeProfile]);
+  const [detail, setDetail] = useState<null | "stm" | "ltm" | "reminders">(null);
   // Controlled by the sidebar's "show in pipeline" when provided, else local.
   const selId = selectedId ?? localSel;
   const setSelId = (id: string) => (onSelectId ? onSelectId(id) : setLocalSel(id));
@@ -342,7 +438,7 @@ function PipelineFlow({
     { key: "topics", x: 45, y: 14, icon: <Tag size={17} />, label: "Topics", value: stats.distinctTopics, sub: `${stats.tagged} tagged`, done: done?.topics, ext: false, nav: "topics" as ExploreTab, dialog: null, tip: trace?.topics.length ? trace.topics.slice(0, 3).join(", ") : "—" },
     { key: "kg", x: 66, y: 7, icon: <Network size={17} />, label: "Knowledge graph", value: stats.edges, sub: `${stats.linked} linked`, done: done?.kg, ext: false, nav: "graph" as ExploreTab, dialog: null, tip: trace ? `${trace.related.length} related` : "" },
     // external-data lane
-    { key: "gmail", x: 8, y: 33, icon: <Mail size={17} />, label: "Gmail", value: emailTasks, sub: "email tasks", done: null, ext: true, nav: null as ExploreTab | null, dialog: "gmail" as const, tip: "" },
+    { key: "gmail", x: 8, y: 33, icon: <Mail size={17} />, label: "Gmail", value: emailTasks, sub: "email tasks", done: null, ext: true, nav: "emails" as ExploreTab, dialog: null, tip: "" },
     { key: "calendar", x: 8, y: 45, icon: <CalIcon size={17} />, label: "Calendar", value: calEvents, sub: "events", done: null, ext: true, nav: "calendar" as ExploreTab, dialog: null, tip: "" },
     { key: "reminders", x: 28, y: 39, icon: <Bell size={17} />, label: "Reminders / tasks", value: openReminders, sub: "open", done: null, ext: true, nav: null as ExploreTab | null, dialog: "reminders" as const, tip: "" },
     // memory (both lanes converge)
@@ -497,7 +593,6 @@ function PipelineFlow({
                 {detail === "stm" && <><Clock size={16} /> Short-term memory</>}
                 {detail === "ltm" && <><Brain size={16} /> Long-term memory</>}
                 {detail === "reminders" && <><Bell size={16} /> Reminders &amp; tasks</>}
-                {detail === "gmail" && <><Mail size={16} /> Email tasks &amp; digest</>}
               </h3>
               <button className="icon-btn" onClick={() => setDetail(null)} aria-label="close"><X size={18} /></button>
             </header>
@@ -522,46 +617,6 @@ function PipelineFlow({
                       </li>
                     ))}
                   </ul>
-                );
-              })()}
-              {detail === "gmail" && (() => {
-                const digest = notes.find((n) => /Inbox digest/.test(n.title))?.body;
-                const tasks = reminders.filter((r) => r.source === "gmail").sort((a, b) => Number(a.done) - Number(b.done) || a.dueAt - b.dueAt);
-                return (
-                  <>
-                    {digest && <div className="pf-digest"><b>📥 Inbox digest</b><p>{digest}</p></div>}
-                    <div className="pf-sec-h">Emails <span className="pf-count">{emails.length}</span></div>
-                    {emails.length === 0 ? (
-                      <div className="lookup-muted">No emails stored yet — run an email sync or import.</div>
-                    ) : (
-                      <ul className="pf-email-list">
-                        {emails.map((e) => (
-                          <li key={e.id}>
-                            <div className="pf-email-top">
-                              <span className="pf-email-subj">{e.subject || "(no subject)"}</span>
-                              <span className="pf-rem-due">{e.ts ? new Date(e.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>
-                            </div>
-                            {e.from && <div className="pf-email-from">{e.from}</div>}
-                            {e.snippet && <div className="pf-email-snip">{e.snippet}</div>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {tasks.length > 0 && (
-                      <>
-                        <div className="pf-sec-h">Extracted tasks <span className="pf-count">{tasks.length}</span></div>
-                        <ul className="pf-rem-list">
-                          {tasks.map((r) => (
-                            <li key={r.id} className={r.done ? "done" : ""}>
-                              <input type="checkbox" checked={r.done} onChange={() => toggleReminder(r.id)} />
-                              <span className="pf-rem-text">{r.text}</span>
-                              <span className="pf-rem-due">{new Date(r.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
-                  </>
                 );
               })()}
             </section>

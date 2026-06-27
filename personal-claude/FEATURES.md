@@ -256,6 +256,10 @@ empty conversations are excluded from all of them.
   **breadcrumbs** + back. Click a conversation to preview/open.
 - **Topics** — topics as nodes sized by centrality (**defaults to the Table view**).
 - **Pipeline** — the processing flow (see §14).
+- **Emails** — browse synced/imported mail (search, inbox digest, action items, the
+  email list). Each email → **💬 Discuss** (opens a new conversation seeded with it)
+  or **＋ Task** (creates a reminder). Calendar events / reminders get the same
+  **💬 Discuss** action in the Reminders tab. (Backed by `POST …/conversations/seed`.)
 
 **Graph interactions** (Graph-Commons style): force-directed layout with
 **pan / zoom / drag**, **fit-to-screen**, **spread**, a **timeline scrubber +
@@ -307,10 +311,9 @@ Calendar ┴→ Reminders / tasks ─────────┘
   conversation's actual output at each stage** — summary, topics, the specific
   knowledge-graph relations (clickable), STM status, and the LTM entry.
 - **Clickable nodes → content dialogs** (with a **← Back** button): **STM** / **LTM**
-  render their markdown; **Reminders / tasks** shows the list (toggle complete);
-  **Gmail** opens an **email browser** — the inbox digest, the stored **email list**
-  (subject / sender / snippet / date), and the extracted ✉️ tasks. Topics / Knowledge
-  graph / Calendar nodes navigate to their tabs.
+  render their markdown; **Reminders / tasks** shows the list (toggle complete).
+  **Gmail / Topics / Knowledge graph / Calendar** nodes navigate to their tabs
+  (Gmail → the Emails tab).
 
 ---
 

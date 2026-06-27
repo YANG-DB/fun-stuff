@@ -219,6 +219,12 @@ export const api = {
     req<{ ok: boolean; cleared: { profile: string; marked: number }[] }>("/maintenance/clear-mock", {
       method: "POST",
     }),
+  // new conversation seeded from arbitrary content (an email / calendar event)
+  seedConversation: (pid: string, title: string, body: string) =>
+    req<Conversation>(`/profiles/${pid}/conversations/seed`, {
+      method: "POST",
+      body: JSON.stringify({ title, body }),
+    }),
   // new session seeded from a cluster of related conversations (continuity briefing)
   continueCluster: (pid: string, ids: string[], title?: string) =>
     req<Conversation>(`/profiles/${pid}/conversations/from-cluster`, {

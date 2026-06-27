@@ -263,7 +263,7 @@ export function Sidebar({
         {tab === "notes" && (
           <NotesList profileId={profileId} onOpen={onSelectConversation} />
         )}
-        {tab === "reminders" && <RemindersList profileId={profileId} />}
+        {tab === "reminders" && <RemindersList profileId={profileId} onOpen={onSelectConversation} />}
         {tab === "memory" && (
           <>
             <MemoryFiles />
@@ -917,8 +917,14 @@ function ymd(ts: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function RemindersList({ profileId }: { profileId: string }) {
-  const { reminders, toggleReminder, deleteReminder, addReminder } = useStore();
+function RemindersList({ profileId, onOpen }: { profileId: string; onOpen: (id: string) => void }) {
+  const { reminders, toggleReminder, deleteReminder, addReminder, seedConversation } = useStore();
+  const discuss = async (r: { text: string; source?: string }) => {
+    const label = r.source === "gcal" ? "📅 event" : "🔔 reminder";
+    const body = `${label}: **${r.text}**\n\n_Let's work on this — what do you need?_`;
+    const c = await seedConversation(r.text.slice(0, 60), body);
+    onOpen(c.id);
+  };
   const [text, setText] = useState("");
   const [date, setDate] = useState(ymd(Date.now() + 86_400_000)); // tomorrow
   const [time, setTime] = useState("09:00");
@@ -1031,6 +1037,13 @@ function RemindersList({ profileId }: { profileId: string }) {
                 </span>
               </div>
               <div className="reminder-acts">
+                <button
+                  className="link-btn"
+                  title="Discuss in a new conversation"
+                  onClick={() => discuss(r)}
+                >
+                  <MessageSquare size={13} />
+                </button>
                 <button
                   className="link-btn"
                   title="Download .ics (add to any calendar)"

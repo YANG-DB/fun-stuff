@@ -57,6 +57,7 @@ interface Store {
 
   createConversation: (model: ModelId) => Promise<Conversation>;
   continueCluster: (ids: string[], title?: string) => Promise<Conversation>;
+  seedConversation: (title: string, body: string) => Promise<Conversation>;
   appendMessage: (conversationId: string, msg: Message) => Promise<void>;
   updateMessage: (
     conversationId: string,
@@ -274,6 +275,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (ids: string[], title?: string): Promise<Conversation> => {
       const pid = activeProfileId!;
       const c = await api.continueCluster(pid, ids, title);
+      setConversations((prev) => [c, ...prev]);
+      bumpChatCount(pid, 1);
+      return c;
+    },
+    [activeProfileId, bumpChatCount],
+  );
+
+  const seedConversation = useCallback(
+    async (title: string, body: string): Promise<Conversation> => {
+      const pid = activeProfileId!;
+      const c = await api.seedConversation(pid, title, body);
       setConversations((prev) => [c, ...prev]);
       bumpChatCount(pid, 1);
       return c;
@@ -532,6 +544,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteProfile,
     createConversation,
     continueCluster,
+    seedConversation,
     appendMessage,
     updateMessage,
     renameConversation,

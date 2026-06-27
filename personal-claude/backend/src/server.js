@@ -485,6 +485,26 @@ app.patch(
 
 // Start a NEW conversation seeded from a cluster of related conversations:
 // synthesize a continuity briefing across them and open with it as context.
+// Seed a new conversation from arbitrary context (e.g. an email or calendar
+// event) — opens with the content as an assistant context message.
+app.post("/api/profiles/:pid/conversations/seed", withProfile, (req, res) => {
+  const title = String(req.body?.title || "New chat").slice(0, 80) || "New chat";
+  const body = String(req.body?.body || "").slice(0, 8000);
+  const now = Date.now();
+  const id = uid("c");
+  req.db
+    .prepare("INSERT INTO conversations (id, title, created_at, updated_at, model, concepts, pinned) VALUES (?,?,?,?,?,'[]',0)")
+    .run(id, title, now, now, "claude-opus-4-8");
+  if (body) {
+    req.db
+      .prepare("INSERT INTO messages (id, conversation_id, role, content, ts, model, context_used, seq) VALUES (?,?,?,?,?,?,NULL,0)")
+      .run(uid("m"), id, "assistant", body, now, "claude-opus-4-8");
+  }
+  const row = req.db.prepare("SELECT * FROM conversations WHERE id=?").get(id);
+  const msgs = req.db.prepare("SELECT * FROM messages WHERE conversation_id=? ORDER BY ts, seq").all(id).map(mapMessage);
+  res.status(201).json(mapConversation(row, req.pid, msgs));
+});
+
 app.post("/api/profiles/:pid/conversations/from-cluster", withProfile, async (req, res) => {
   try {
     const ids = Array.isArray(req.body.ids) ? [...new Set(req.body.ids.filter(Boolean))] : [];
