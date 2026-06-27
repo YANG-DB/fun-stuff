@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, openSync, readSync, closeSync, statSync } from "node:fs";
 import dotenv from "dotenv";
 import express from "express";
 import {
@@ -15,6 +15,7 @@ import { hasGeminiKey, streamGemini } from "./gemini.js";
 import { hasAnthropicKey, runClaude } from "./anthropic.js";
 import { importClaudeExport } from "./claudeImport.js";
 import { parseEngineDir, importNormalized } from "./engineImport.js";
+import * as gws from "./gworkspace.js";
 import { buildSystem } from "./systemPrompt.js";
 import { readContext, writeContext } from "./contextStore.js";
 import { memoryDir } from "./memory.js";
@@ -114,6 +115,7 @@ function mapConversation(row, profileId, messages, tokens) {
     subject: row.subject || undefined,
     source: row.source || "claude",
     deleted: !!row.deleted,
+    // (conversation source, distinct from reminder.source below)
     messages: messages ?? [],
     tokens: tokens ?? 0,
   };
@@ -137,6 +139,7 @@ function mapReminder(row, profileId) {
     dueAt: row.due_at,
     done: !!row.done,
     repeat: row.repeat || "none",
+    source: row.source || "manual",
     conversationId: row.conversation_id ?? undefined,
   };
 }
@@ -780,6 +783,7 @@ app.put("/api/profiles/:pid/details", withProfile, (req, res) => {
   const block = detailsBlock(d);
   const next = [block, rest].filter(Boolean).join("\n\n").trim();
   writeMemFile(req.pid, LTM_FILE, next);
+  syncBio(req.pid); // mirror to personal-claude/bio/
   res.json({ details: d, ltm: next });
 });
 
@@ -795,27 +799,32 @@ app.get("/api/profiles/:pid/memory-files", withProfile, (req, res) => {
 });
 
 // Short-term memory: regenerate from the latest activity (time-relevant).
-app.post("/api/profiles/:pid/stm", withProfile, async (req, res) => {
-  const prow = systemDb.prepare("SELECT * FROM profiles WHERE id=?").get(req.pid);
+async function rebuildStm(pid) {
+  const prow = systemDb.prepare("SELECT default_model FROM profiles WHERE id=?").get(pid);
   const model = prow?.default_model || "claude-opus-4-8";
-  const a = gatherActivity(req.db);
+  const a = gatherActivity(getProfileDb(pid));
+  const content = await runModel(
+    model,
+    "You maintain a SHORT-TERM MEMORY for a user's AI assistant. From the recent activity, write the user's current, time-relevant state: what they're actively working on, recent topics, and pending tasks/reminders. Concise markdown bullets (max ~12). Focus on the last several days; OMIT durable long-term interests. Output only the memory content, no preamble.",
+    [
+      {
+        role: "user",
+        content:
+          `Recent conversations:\n${a.convs.join("\n") || "(none)"}\n\n` +
+          `Open tasks / reminders:\n${a.reminders.join("\n") || "(none)"}\n\n` +
+          `Recent saved notes:\n${a.mems.join("\n") || "(none)"}\n\n` +
+          "Write the updated short-term memory.",
+      },
+    ],
+  );
+  writeMemFile(pid, STM_FILE, content.trim());
+  return content.trim();
+}
+
+app.post("/api/profiles/:pid/stm", withProfile, async (req, res) => {
   try {
-    const content = await runModel(
-      model,
-      "You maintain a SHORT-TERM MEMORY for a user's AI assistant. From the recent activity, write the user's current, time-relevant state: what they're actively working on, recent topics, and pending tasks/reminders. Concise markdown bullets (max ~12). Focus on the last several days; OMIT durable long-term interests. Output only the memory content, no preamble.",
-      [
-        {
-          role: "user",
-          content:
-            `Recent conversations:\n${a.convs.join("\n") || "(none)"}\n\n` +
-            `Open tasks / reminders:\n${a.reminders.join("\n") || "(none)"}\n\n` +
-            `Recent saved notes:\n${a.mems.join("\n") || "(none)"}\n\n` +
-            "Write the updated short-term memory.",
-        },
-      ],
-    );
-    writeMemFile(req.pid, STM_FILE, content.trim());
-    res.json({ content: content.trim(), updatedAt: Date.now() });
+    const content = await rebuildStm(req.pid);
+    res.json({ content, updatedAt: Date.now() });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
@@ -848,6 +857,7 @@ app.post("/api/profiles/:pid/ltm", withProfile, async (req, res) => {
     // re-prepend the curated personal-details block so it survives consolidation
     const merged = [pdBlock, content.trim()].filter(Boolean).join("\n\n").trim();
     writeMemFile(req.pid, LTM_FILE, merged);
+    syncBio(req.pid); // mirror to personal-claude/bio/
     res.json({ content: merged, updatedAt: Date.now() });
   } catch (e) {
     res.status(502).json({ error: e.message });
@@ -992,6 +1002,352 @@ app.post("/api/profiles/:pid/lookup", withProfile, async (req, res) => {
   }
   res.json({ q, local, web });
 });
+
+// --- Google Workspace (Gmail + Calendar) per-profile sync ------------------
+
+function getIntegration(pid) {
+  const db = getProfileDb(pid);
+  const row = db.prepare("SELECT data, connected_at, last_sync FROM integrations WHERE provider='google'").get();
+  if (!row) return null;
+  let d = {};
+  try { d = JSON.parse(row.data || "{}"); } catch { /* */ }
+  return { ...d, connectedAt: row.connected_at, lastSync: row.last_sync };
+}
+function setIntegration(pid, d) {
+  const db = getProfileDb(pid);
+  const store = JSON.stringify({ refreshToken: d.refreshToken, email: d.email, scope: d.scope, syncState: d.syncState || {} });
+  const exists = db.prepare("SELECT 1 FROM integrations WHERE provider='google'").get();
+  if (exists) db.prepare("UPDATE integrations SET data=?, last_sync=? WHERE provider='google'").run(store, d.lastSync ?? null);
+  else db.prepare("INSERT INTO integrations (provider, data, connected_at, last_sync) VALUES ('google',?,?,?)").run(store, Date.now(), d.lastSync ?? null);
+}
+function clearIntegration(pid) {
+  getProfileDb(pid).prepare("DELETE FROM integrations WHERE provider='google'").run();
+}
+
+const gTokenCache = new Map(); // pid -> { token, exp }
+async function getGoogleAccess(pid) {
+  const it = getIntegration(pid);
+  if (!it?.refreshToken) throw Object.assign(new Error("not connected"), { code: 400 });
+  const c = gTokenCache.get(pid);
+  if (c && c.exp > Date.now() + 30_000) return c.token;
+  const { accessToken, expiresIn } = await gws.refreshAccess(gws.decrypt(it.refreshToken));
+  gTokenCache.set(pid, { token: accessToken, exp: Date.now() + expiresIn * 1000 });
+  return accessToken;
+}
+
+// Turn calendar events + emails into reminders + an inbox digest. Shared by the
+// live API sync and the offline Takeout import.
+async function applyGoogleData(pid, events, msgs) {
+  const db = getProfileDb(pid);
+  const have = new Set(
+    db.prepare("SELECT source_ref FROM reminders WHERE source_ref IS NOT NULL").all().map((r) => r.source_ref),
+  );
+  const insRem = db.prepare(
+    "INSERT INTO reminders (id, text, due_at, done, conversation_id, repeat, source, source_ref) VALUES (?,?,?,0,NULL,'none',?,?)",
+  );
+  let calendar = 0;
+  let gmail = 0;
+  let digest = "";
+
+  for (const e of events || []) {
+    if (have.has(e.instanceRef)) continue;
+    insRem.run(uid("r"), `📅 ${e.title}${e.location ? ` @ ${e.location}` : ""}`, e.start, "gcal", e.instanceRef);
+    have.add(e.instanceRef);
+    calendar++;
+  }
+
+  if ((msgs || []).length) {
+    // persist the raw email list (deduped) so it can be browsed
+    const insMail = db.prepare(
+      "INSERT OR REPLACE INTO emails (id, ts, from_addr, subject, snippet, source) VALUES (?,?,?,?,?,'gmail')",
+    );
+    for (const m of msgs) insMail.run(m.id, m.ts || Date.now(), m.from || "", m.subject || "", m.snippet || "");
+    try {
+      const prow = systemDb.prepare("SELECT default_model FROM profiles WHERE id=?").get(pid);
+      const model = prow?.default_model || "claude-opus-4-8";
+      const raw = await runModel(
+        model,
+        'You triage a person\'s recent emails. Return ONLY JSON: {"tasks":[{"i":<index>,"text":"action to take","dueInDays":<1-14 optional>}],"digest":"2-4 sentence summary of what needs attention"}. Only include tasks that need the user to DO something (reply, pay, schedule, decide); skip newsletters and notifications.',
+        [{ role: "user", content: "Emails:\n" + msgs.map((m, i) => `${i}. From: ${m.from}\n   Subject: ${m.subject}\n   ${m.snippet}`).join("\n\n") + "\n\nReturn the JSON." }],
+      );
+      let parsed = { tasks: [], digest: "" };
+      try { parsed = firstJson(raw); } catch { /* */ }
+      digest = String(parsed.digest || "").trim();
+      for (const t of parsed.tasks || []) {
+        const msg = msgs[t.i];
+        if (!msg) continue;
+        const ref = `gmail:${msg.id}`;
+        if (have.has(ref)) continue;
+        const days = Math.min(14, Math.max(1, Number(t.dueInDays) || 2));
+        insRem.run(uid("r"), `✉️ ${String(t.text).slice(0, 160)}`, Date.now() + days * 86_400_000, "gmail", ref);
+        have.add(ref);
+        gmail++;
+      }
+      if (digest) {
+        const title = `📥 Inbox digest ${new Date().toISOString().slice(0, 10)}`;
+        db.prepare("DELETE FROM notes WHERE title=?").run(title);
+        db.prepare("INSERT INTO notes (id, conversation_id, title, body, created_at, updated_at) VALUES (?,NULL,?,?,?,?)")
+          .run(uid("n"), title, digest, Date.now(), Date.now());
+      }
+    } catch { /* LLM/digest best-effort */ }
+  }
+
+  return { calendar, gmail, digest };
+}
+
+// Pull calendar events + email action-items from the live Google API.
+async function syncProfileGoogle(pid) {
+  const it = getIntegration(pid);
+  if (!it?.refreshToken) throw Object.assign(new Error("not connected"), { code: 400 });
+  const access = await getGoogleAccess(pid);
+  const now = Date.now();
+  let events = [];
+  let msgs = [];
+  try { events = await gws.listCalendarEvents(access, now, now + 14 * 86_400_000); } catch { /* */ }
+  try { msgs = await gws.listGmail(access); } catch { /* */ }
+  const r = await applyGoogleData(pid, events, msgs);
+  setIntegration(pid, { ...it, lastSync: Date.now() });
+  return { ok: true, ...r };
+}
+
+// Read an mbox in full when it's modestly sized (Takeout date-range exports
+// usually are); otherwise read the last maxBytes. Mbox ordering isn't reliable,
+// so reading whole + sorting by Date is the robust path.
+function readMbox(path, whole = 64 * 1024 * 1024, tail = 24 * 1024 * 1024) {
+  const size = statSync(path).size;
+  if (size <= whole) return readFileSync(path, "utf8");
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(tail);
+    readSync(fd, buf, 0, tail, size - tail);
+    return buf.toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Offline test: import a Google Takeout folder (*.ics calendar + *.mbox mail) and
+// run the same pipeline — no API connection required.
+app.post("/api/profiles/:pid/google/import-export", withProfile, async (req, res) => {
+  try {
+    const dir = resolveExportDir(req.body?.dir);
+    const days = Math.min(120, Math.max(1, Number(req.body?.days) || 31)); // recent window (default 1 month)
+    let events = [];
+    let msgs = [];
+    const walk = (d) => {
+      for (const name of readdirSync(d)) {
+        if (name.startsWith("._")) continue;
+        const p = join(d, name);
+        let st;
+        try { st = statSync(p); } catch { continue; }
+        if (st.isDirectory()) walk(p);
+        else if (/\.ics$/i.test(name)) events.push(...gws.parseIcs(readFileSync(p, "utf8")));
+        else if (/\.mbox$/i.test(name)) msgs.push(...gws.parseMbox(readMbox(p)));
+      }
+    };
+    walk(dir);
+    const parsedEvents = events.length;
+    const parsedEmails = msgs.length;
+    // calendar: recent + upcoming
+    events = events.filter((e) => e.start >= Date.now() - 7 * 86_400_000 && e.start <= Date.now() + 30 * 86_400_000).slice(0, 100);
+    // email: newest first; prefer the last `days`, but if the export predates that
+    // window (Takeout date-range exports), fall back to the newest available.
+    const since = Date.now() - days * 86_400_000;
+    const dated = msgs.filter((m) => m.ts > 0).sort((a, b) => b.ts - a.ts);
+    const undated = msgs.filter((m) => m.ts === 0);
+    let recent = dated.filter((m) => m.ts >= since);
+    if (recent.length < 3) recent = dated.slice(0, 30); // export older than the window
+    msgs = [...recent, ...undated].slice(0, 30);
+    const r = await applyGoogleData(req.pid, events, msgs);
+    res.json({ ok: true, ...r, parsedEvents, parsedEmails, windowDays: days, windowedEvents: events.length, windowedEmails: msgs.length });
+  } catch (e) {
+    res.status(e.code || 400).json({ error: e.message });
+  }
+});
+
+app.post("/api/profiles/:pid/google/auth-url", withProfile, (req, res) => {
+  if (!gws.workspaceConfigured())
+    return res.status(400).json({ error: "Google client/secret not configured on the server" });
+  res.json({ url: gws.authUrl(gws.signState(req.pid, req.user?.sub || "anon")) });
+});
+
+// OAuth redirect target (public — validated by the signed state)
+app.get("/api/google/callback", async (req, res) => {
+  const page = (msg) =>
+    `<!doctype html><meta charset=utf-8><body style="font:15px -apple-system,sans-serif;padding:48px;text-align:center;background:#0d0f14;color:#ece6d8"><p>${msg}</p><script>setTimeout(()=>window.close(),1800)</script></body>`;
+  if (req.query.error) return res.send(page("Connection cancelled — you can close this window."));
+  const st = req.query.state ? gws.verifyState(String(req.query.state)) : null;
+  if (!st || !req.query.code) return res.status(400).send(page("Invalid or expired request."));
+  try {
+    const tok = await gws.exchangeCode(String(req.query.code));
+    if (!tok.refresh_token)
+      return res.send(page("No refresh token — revoke this app at myaccount.google.com/permissions, then reconnect."));
+    let email = "";
+    try { email = (await gws.userInfo(tok.access_token)).email || ""; } catch { /* */ }
+    setIntegration(st.pid, { refreshToken: gws.encrypt(tok.refresh_token), email, scope: tok.scope, syncState: {} });
+    res.send(page(`Connected ${email || "Google"} ✓ — you can close this window.`));
+  } catch (e) {
+    res.status(500).send(page("Connection failed: " + e.message));
+  }
+});
+
+app.get("/api/profiles/:pid/emails", withProfile, (req, res) => {
+  const rows = req.db
+    .prepare("SELECT id, ts, from_addr, subject, snippet, source FROM emails ORDER BY ts DESC LIMIT 300")
+    .all();
+  res.json({ emails: rows.map((r) => ({ id: r.id, ts: r.ts, from: r.from_addr, subject: r.subject, snippet: r.snippet, source: r.source })) });
+});
+
+app.get("/api/profiles/:pid/integrations", withProfile, (req, res) => {
+  const it = getIntegration(req.pid);
+  res.json({
+    configured: gws.workspaceConfigured(),
+    google: it
+      ? { connected: true, email: it.email || null, lastSync: it.lastSync || null, scope: it.scope || "" }
+      : { connected: false },
+  });
+});
+
+app.post("/api/profiles/:pid/google/sync", withProfile, async (req, res) => {
+  try {
+    res.json(await syncProfileGoogle(req.pid));
+  } catch (e) {
+    res.status(e.code || 502).json({ error: e.message });
+  }
+});
+
+app.delete("/api/profiles/:pid/google", withProfile, async (req, res) => {
+  const it = getIntegration(req.pid);
+  if (it?.refreshToken) await gws.revoke(gws.decrypt(it.refreshToken));
+  clearIntegration(req.pid);
+  gTokenCache.delete(req.pid);
+  res.json({ ok: true });
+});
+
+// --- scheduled daily tasks (per profile) -----------------------------------
+
+// A daily-briefing note: today + what needs attention, from reminders + STM + activity.
+async function jobDailyBriefing(pid) {
+  const db = getProfileDb(pid);
+  const a = gatherActivity(db);
+  const soon = db
+    .prepare("SELECT text, due_at FROM reminders WHERE done=0 AND due_at <= ? ORDER BY due_at LIMIT 30")
+    .all(Date.now() + 3 * 86_400_000)
+    .map((r) => `- ${r.text} (${new Date(r.due_at).toISOString().slice(0, 10)})`);
+  const stm = readMemFile(pid, STM_FILE).content;
+  const model = systemDb.prepare("SELECT default_model FROM profiles WHERE id=?").get(pid)?.default_model || "claude-opus-4-8";
+  const briefing = await runModel(
+    model,
+    "You write a concise daily briefing for the user. Produce: a one-line 'today' summary, a short prioritized list of what needs attention (tasks/reminders due soon), and any notable recent threads. Markdown, friendly, under 200 words, no preamble.",
+    [{
+      role: "user",
+      content:
+        `Date: ${new Date().toDateString()}\n\n` +
+        `Due soon / overdue:\n${soon.join("\n") || "(none)"}\n\n` +
+        `Short-term memory:\n${stm || "(none)"}\n\n` +
+        `Recent conversations:\n${a.convs.join("\n") || "(none)"}\n\nWrite the briefing.`,
+    }],
+  );
+  const title = `🗞️ Daily briefing ${new Date().toISOString().slice(0, 10)}`;
+  db.prepare("DELETE FROM notes WHERE title=?").run(title);
+  db.prepare("INSERT INTO notes (id, conversation_id, title, body, created_at, updated_at) VALUES (?,NULL,?,?,?,?)")
+    .run(uid("n"), title, briefing.trim(), Date.now(), Date.now());
+  return `briefing saved · ${soon.length} due soon`;
+}
+
+const JOBS = {
+  "google-sync": {
+    label: "Sync Gmail & Calendar",
+    run: async (pid) => {
+      const it = getIntegration(pid);
+      if (!it?.refreshToken) return "skipped — not connected";
+      const r = await syncProfileGoogle(pid);
+      return `${r.calendar} calendar · ${r.gmail} email${r.digest ? " · digest" : ""}`;
+    },
+  },
+  "refresh-stm": { label: "Refresh short-term memory", run: async (pid) => { await rebuildStm(pid); return "STM refreshed"; } },
+  "daily-briefing": { label: "Daily briefing", run: jobDailyBriefing },
+};
+const JOB_ORDER = ["google-sync", "refresh-stm", "daily-briefing"];
+
+function getTasks(pid) {
+  const db = getProfileDb(pid);
+  const rows = Object.fromEntries(
+    db.prepare("SELECT name, enabled, last_run, last_result FROM scheduled_tasks").all().map((r) => [r.name, r]),
+  );
+  return JOB_ORDER.map((name) => {
+    const r = rows[name];
+    return { name, label: JOBS[name].label, enabled: r ? !!r.enabled : true, lastRun: r?.last_run || null, lastResult: r?.last_result || null };
+  });
+}
+function setTaskEnabled(pid, name, enabled) {
+  const db = getProfileDb(pid);
+  const ex = db.prepare("SELECT 1 FROM scheduled_tasks WHERE name=?").get(name);
+  if (ex) db.prepare("UPDATE scheduled_tasks SET enabled=? WHERE name=?").run(enabled ? 1 : 0, name);
+  else db.prepare("INSERT INTO scheduled_tasks (name, enabled) VALUES (?,?)").run(name, enabled ? 1 : 0);
+}
+function recordTaskRun(pid, name, result) {
+  const db = getProfileDb(pid);
+  const r = String(result).slice(0, 300);
+  const ex = db.prepare("SELECT 1 FROM scheduled_tasks WHERE name=?").get(name);
+  if (ex) db.prepare("UPDATE scheduled_tasks SET last_run=?, last_result=? WHERE name=?").run(Date.now(), r, name);
+  else db.prepare("INSERT INTO scheduled_tasks (name, enabled, last_run, last_result) VALUES (?,1,?,?)").run(name, Date.now(), r);
+}
+async function runTask(pid, name) {
+  if (!JOBS[name]) throw Object.assign(new Error("unknown task"), { code: 400 });
+  let result;
+  try {
+    result = await JOBS[name].run(pid);
+  } catch (e) {
+    recordTaskRun(pid, name, "error: " + e.message);
+    throw Object.assign(new Error(e.message), { code: 502 });
+  }
+  recordTaskRun(pid, name, result);
+  return result;
+}
+
+app.get("/api/profiles/:pid/tasks", withProfile, (req, res) => {
+  res.json({ tasks: getTasks(req.pid) });
+});
+app.patch("/api/profiles/:pid/tasks/:name", withProfile, (req, res) => {
+  if (!JOBS[req.params.name]) return res.status(400).json({ error: "unknown task" });
+  setTaskEnabled(req.pid, req.params.name, req.body?.enabled !== false);
+  res.json({ ok: true });
+});
+app.post("/api/profiles/:pid/tasks/:name/run", withProfile, async (req, res) => {
+  try {
+    const result = await runTask(req.pid, req.params.name);
+    res.json({ ok: true, name: req.params.name, result, lastRun: Date.now() });
+  } catch (e) {
+    res.status(e.code || 502).json({ error: e.message });
+  }
+});
+app.post("/api/profiles/:pid/tasks/run-all", withProfile, async (req, res) => {
+  const ran = [];
+  for (const t of getTasks(req.pid)) {
+    if (!t.enabled) continue;
+    try { ran.push({ name: t.name, result: await runTask(req.pid, t.name) }); }
+    catch (e) { ran.push({ name: t.name, result: "error: " + e.message }); }
+  }
+  res.json({ ok: true, ran });
+});
+
+// Daily scheduler: run each profile's enabled tasks if not run in ~20h.
+function startDailyScheduler() {
+  const run = async () => {
+    try {
+      for (const { id } of systemDb.prepare("SELECT id FROM profiles").all()) {
+        for (const t of getTasks(id)) {
+          if (!t.enabled) continue;
+          if (t.lastRun && Date.now() - t.lastRun < 20 * 3_600_000) continue;
+          try { await runTask(id, t.name); } catch { /* */ }
+        }
+      }
+    } catch { /* */ }
+  };
+  setTimeout(run, 30_000);
+  setInterval(run, 3_600_000);
+}
 
 // --- chat gateway ----------------------------------------------------------
 
@@ -1207,6 +1563,72 @@ function resolveExportFile(rel) {
   if (!existsSync(file)) throw Object.assign(new Error("conversations.json not found"), { code: 404 });
   return file;
 }
+
+// Mirror a profile's long-term memory to a human-readable bio file under
+// personal-claude/bio/<name>_ltm.md (git-ignored). Best-effort.
+const BIO_DIR = join(REPO_ROOT, "bio");
+function syncBio(pid) {
+  try {
+    const prow = systemDb.prepare("SELECT name FROM profiles WHERE id=?").get(pid);
+    const name = prow?.name || pid;
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || pid;
+    const ltm = readMemFile(pid, LTM_FILE).content;
+    mkdirSync(BIO_DIR, { recursive: true });
+    writeFileSync(
+      join(BIO_DIR, `${slug}_ltm.md`),
+      `# ${name} — Long-term memory\n\n_Synced ${new Date().toISOString().slice(0, 10)} from this profile's LTM._\n\n${ltm || "_(empty)_"}\n`,
+      "utf8",
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Ensure a family-relations markdown exists for a profile (template; never
+// overwrites an existing one so hand-written content is preserved).
+function syncFamily(pid) {
+  try {
+    const prow = systemDb.prepare("SELECT name FROM profiles WHERE id=?").get(pid);
+    const name = prow?.name || pid;
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || pid;
+    mkdirSync(BIO_DIR, { recursive: true });
+    const file = join(BIO_DIR, `${slug}_family.md`);
+    if (existsSync(file)) return; // keep hand-edited content
+    writeFileSync(
+      file,
+      `# ${name} — Family relations\n\n` +
+        `_Personal context for the assistant. Fill in what's relevant._\n\n` +
+        `## Immediate family\n` +
+        `- **Partner / spouse:** \n` +
+        `- **Children:** \n` +
+        `- **Parents:** \n` +
+        `- **Siblings:** \n\n` +
+        `## Extended family\n` +
+        `- \n\n` +
+        `## Important dates\n` +
+        `- \n\n` +
+        `## Notes\n` +
+        `- \n`,
+      "utf8",
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Write every profile's current LTM + ensure a family file in the bio folder.
+app.post("/api/maintenance/sync-bios", (req, res) => {
+  try {
+    const rows = systemDb.prepare("SELECT id, name FROM profiles").all();
+    for (const { id } of rows) {
+      syncBio(id);
+      syncFamily(id);
+    }
+    res.json({ ok: true, synced: rows.map((r) => r.name) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // Resolve an export FOLDER under exports/ (for non-Claude engine imports).
 function resolveExportDir(rel) {
@@ -1434,4 +1856,6 @@ app.listen(PORT, () => {
   console.log(`Claude key: ${hasAnthropicKey() ? "loaded ✓" : "missing ✗"}`);
   console.log(`Gemini key: ${hasGeminiKey() ? "loaded ✓" : "missing ✗"}`);
   console.log(`Google login gate: ${authConfigured() ? "ON ✓" : "off (open mode)"}`);
+  console.log(`Gmail/Calendar sync: ${gws.workspaceConfigured() ? "ready ✓" : "off (set GOOGLE_CLIENT_SECRET)"}`);
+  startDailyScheduler();
 });

@@ -27,10 +27,12 @@ memory, and rich exploration views.
 13. [Clusters](#13-clusters)
 14. [Pipeline view](#14-pipeline-view)
 15. [Reminders & calendar events](#15-reminders--calendar-events)
-16. [Notes & saved memory](#16-notes--saved-memory)
-17. [Slash commands](#17-slash-commands)
-18. [Tool / API reference](#18-tool--api-reference)
-19. [Privacy, secrets & git hygiene](#19-privacy-secrets--git-hygiene)
+16. [Gmail & Calendar sync](#16-gmail--calendar-sync)
+17. [Scheduled daily tasks](#17-scheduled-daily-tasks)
+18. [Notes & saved memory](#18-notes--saved-memory)
+19. [Slash commands](#19-slash-commands)
+20. [Tool / API reference](#20-tool--api-reference)
+21. [Privacy, secrets & git hygiene](#21-privacy-secrets--git-hygiene)
 
 ---
 
@@ -43,7 +45,8 @@ all under `~/.personal-claude/` (never in the repo):
 ~/.personal-claude/
   system.db                     # profile registry (id, name, settings, allowed_emails, google)
   profiles.md                   # canonical human-readable profile list (authoritative on restart)
-  profiles/<pid>.db             # per-profile: conversations, messages, notes, reminders, memory
+  profiles/<pid>.db             # per-profile: conversations, messages, notes, reminders,
+                                #   memory, integrations (Google), scheduled_tasks, emails
   context/<pid>.md              # curated <user_context> (hand-edited)
   memory/<pid>/
     STM.md                      # short-term memory (recent, time-relevant)
@@ -240,10 +243,13 @@ Sidebar ([`Sidebar`](frontend/src/components/Sidebar.tsx)):
 [`Explore`](frontend/src/components/Explore.tsx) has five tabs. Soft-deleted and
 empty conversations are excluded from all of them.
 
-- **Calendar** — month grid of conversations + reminders; **hover a day and click
-  `＋`** to add a task/reminder (date + time + recurrence). Recurring reminders are
-  expanded across the month.
-- **This week** — recent week, day columns.
+- **Calendar** — month grid of conversations + reminders; **hover a day → `＋`** to
+  add a task/reminder (date + time + recurrence); recurring reminders expand across
+  the month; an **All / 📅 Events / ✓ Tasks** filter shows/hides calendar events vs
+  reminders.
+- **This week** — day columns of the week, **in sync with the Calendar**: shows the
+  week's reminders/events (recurrence-expanded), the same `＋` add per day, and the
+  events/tasks filter.
 - **Knowledge graph** — a **topic-rooted explorer**: pick a topic from a table,
   then see it centered with its **related topics** (co-occurring) and its
   **conversations**; click a related topic to re-center and walk outward, with
@@ -284,19 +290,27 @@ conversations / topics:
 
 ## 14. Pipeline view
 
-A dynamic flow diagram of the journey each conversation takes:
+A dynamic flow diagram with **two lanes converging on memory**:
 
 ```
-Conversation → Summarize → Topics extract ─┬─→ Knowledge graph
-                                           └─→ STM → LTM
+Conversation → Summarize → Topics ─┬─→ Knowledge graph
+                                   └─→ STM → LTM
+   Gmail ┐                              ↑
+Calendar ┴→ Reminders / tasks ─────────┘
 ```
 
 - Each stage is a live card with a real metric (chats, summarized, topics, graph
-  relations, STM window, LTM memorized) and **animated flow particles** along edges.
+  relations, email tasks, calendar events, open reminders, STM/LTM) and **animated
+  flow particles** along edges.
 - **Trace a conversation** (dropdown, or "Show in pipeline" from the sidebar):
   reached stages show ✓ / un-reached dim; a detail grid shows **that
-  conversation's actual output at each stage** — its summary, topic tags, the
-  specific knowledge-graph relations (clickable), STM status, and the LTM entry.
+  conversation's actual output at each stage** — summary, topics, the specific
+  knowledge-graph relations (clickable), STM status, and the LTM entry.
+- **Clickable nodes → content dialogs** (with a **← Back** button): **STM** / **LTM**
+  render their markdown; **Reminders / tasks** shows the list (toggle complete);
+  **Gmail** opens an **email browser** — the inbox digest, the stored **email list**
+  (subject / sender / snippet / date), and the extracted ✉️ tasks. Topics / Knowledge
+  graph / Calendar nodes navigate to their tabs.
 
 ---
 
@@ -312,11 +326,74 @@ Conversation → Summarize → Topics extract ─┬─→ Knowledge graph
   **Snooze 1h** ([`ReminderAlerts`](frontend/src/components/ReminderAlerts.tsx)).
 - **Calendar sync:** per-reminder **`.ics`** download and **Add to Google
   Calendar** link.
-- Reminders can be auto-extracted during triage.
+- **Filter** the Reminders tab by **All / 📅 Events / ✓ Tasks** (by `source`).
+- Reminders can be auto-extracted during triage, and synced from Gmail/Calendar (§16).
 
 ---
 
-## 16. Notes & saved memory
+## 16. Gmail & Calendar sync
+
+Each profile can connect its **own** Google account (read-only) to pull calendar
+events and email action-items into its reminders — a per-profile daily briefing.
+Direct Node integration ([`gworkspace.js`](backend/src/gworkspace.js)) — no extra
+dependencies (server-side OAuth + REST over global `fetch`).
+
+- **Connect** (⚙ → Gmail & Calendar): server-side **OAuth 2.0 authorization-code**
+  flow with `gmail.readonly` + `calendar.readonly` + `openid email`, `access_type=
+  offline`. The **refresh token is stored AES-256-GCM-encrypted** (key derived from
+  `JWT_SECRET`) in the profile's `integrations` table; **Disconnect** revokes it.
+- **Sync** (`POST …/google/sync`, or **Sync now**):
+  - **Calendar** → next 14 days of events become reminders (📅), deduped by
+    event-instance (`source_ref = gcal:<id>:<start>`).
+  - **Gmail** → recent mail (`newer_than:2d -category:promotions`) is LLM-triaged
+    into **action-item reminders** (✉️, deduped per message `gmail:<id>`) plus a
+    daily **inbox digest** saved as a note.
+- Reminders carry `source` (`manual` / `gcal` / `gmail`) + `source_ref` for dedup.
+- Synced **emails are stored** (per-profile `emails` table) and browsable in the
+  Pipeline's **Gmail** panel (§14).
+
+**Offline test (no API needed):** ⚙ → Gmail & Calendar → **Import & test** reads a
+**Google Takeout** folder under `exports/` — Calendar `.ics` + Gmail `.mbox` — and
+runs the *same* pipeline (events → reminders, emails → tasks + digest + stored
+email list). Email is windowed to the **recent month** (reads the whole bounded
+file, sorts by Date, falls back to newest when the export predates the window), so
+you don't need to export your whole history.
+
+**One-time Google Cloud setup (for live sync):** enable the **Gmail API** +
+**Calendar API**, add `http://localhost:8787/api/google/callback` as an Authorized
+redirect URI, and add the two scopes + your account as a **test user** on the
+consent screen (unverified app; sensitive Gmail scope needs Google verification
+before public use). Set `GOOGLE_CLIENT_SECRET` (and optionally `GOOGLE_REDIRECT_URI`).
+
+Endpoints: `POST …/google/auth-url`, `GET /api/google/callback`,
+`GET …/integrations`, `POST …/google/sync`, `POST …/google/import-export`,
+`DELETE …/google`, `GET …/emails`.
+
+---
+
+## 17. Scheduled daily tasks
+
+A per-profile **job framework** (not just sync) that runs daily — and on demand.
+Toggle which jobs run; each records last-run + result.
+
+- **Built-in jobs:** `google-sync` (Gmail + Calendar → reminders/digest, §16),
+  `refresh-stm` (regenerate short-term memory), `daily-briefing` (an LLM-written
+  **🗞️ Daily briefing** note: today + what needs attention, from reminders + STM +
+  recent activity).
+- **UI** (⚙ → Scheduled daily tasks): enable/disable each job, **▶ Run now** per job,
+  **Run all now**, and each row's last-run time + result.
+- **Scheduler:** hourly tick runs any enabled job not run in ~20h
+  (`startDailyScheduler`); state in the per-profile `scheduled_tasks` table.
+- **Extensible:** add a capability with one entry in the `JOBS` map
+  (`{ label, run: async(pid) => result }`) — e.g. weekly LTM consolidation, an
+  analysis report, or overdue-reminder nudges.
+
+Endpoints: `GET …/tasks`, `PATCH …/tasks/:name`, `POST …/tasks/:name/run`,
+`POST …/tasks/run-all`.
+
+---
+
+## 18. Notes & saved memory
 
 - **Notes** — save any assistant message (or summary) as a note; browse in the
   Notes tab; jump back to the source conversation.
@@ -325,7 +402,7 @@ Conversation → Summarize → Topics extract ─┬─→ Knowledge graph
 
 ---
 
-## 17. Slash commands
+## 19. Slash commands
 
 Typed in the composer:
 
@@ -334,7 +411,7 @@ Typed in the composer:
 
 ---
 
-## 18. Tool / API reference
+## 20. Tool / API reference
 
 | Purpose | Type string | Execution |
 |---|---|---|
@@ -360,16 +437,19 @@ conversations GET/POST/PATCH/DELETE …/conversations · POST …/conversations/
 messages      POST/PATCH …/conversations/:cid/messages
 per-chat AI   POST …/summarize · …/memorize · …/reminder
 notes         GET/POST/PATCH/DELETE …/notes
-reminders     GET/POST/PATCH/DELETE …/reminders   (with repeat)
+reminders     GET/POST/PATCH/DELETE …/reminders   (with repeat / source / source_ref)
+google        POST …/google/auth-url · GET /api/google/callback · GET …/integrations
+              POST …/google/sync · POST …/google/import-export · DELETE …/google · GET …/emails
+tasks         GET …/tasks · PATCH …/tasks/:name · POST …/tasks/:name/run · POST …/tasks/run-all
 import        POST /import/peek · …/import-export · …/import-engine · …/process-batch
 lookup        POST /profiles/:pid/lookup          (context + web)
 chat          POST /chat                          (NDJSON stream, accepts context[])
-maintenance   POST /maintenance/clear-mock        (hard purge of mk-% across profiles)
+maintenance   POST /maintenance/clear-mock · POST /maintenance/sync-bios
 ```
 
 ---
 
-## 19. Privacy, secrets & git hygiene
+## 21. Privacy, secrets & git hygiene
 
 Local-first by design: all profile data lives under `~/.personal-claude/`, outside
 the repo. [`.gitignore`](.gitignore) keeps the following **out of git**:
@@ -377,10 +457,13 @@ the repo. [`.gitignore`](.gitignore) keeps the following **out of git**:
 - **`.env` / `.env.*`** (live API keys, `JWT_SECRET`, Google secret) — only
   `.env.example` templates are committed.
 - **`exports/`** — imported ChatGPT / Gemini / Claude personal archives.
+- **`bio/`** — per-profile bios, LTM mirrors, and family-relations files.
 - `node_modules/`, `dist/`, `*.tsbuildinfo`, `*.db`/`*.sqlite`, logs, OS junk.
 
-No secrets are hardcoded in source. Rotate any key that has been shared outside the
-local `.env`.
+No secrets are hardcoded in source. Google **refresh tokens** (for Gmail/Calendar)
+are stored **AES-256-GCM-encrypted** in the per-profile DB (under
+`~/.personal-claude/`), and Google data access is **read-only**. Rotate any key
+that has been shared outside the local `.env`.
 
 ---
 

@@ -73,6 +73,45 @@ export const api = {
   deleteProfile: (id: string) =>
     req(`/profiles/${id}`, { method: "DELETE" }),
 
+  // Google Workspace (Gmail + Calendar) per-profile integration
+  googleStatus: (pid: string) =>
+    req<{ configured: boolean; google: { connected: boolean; email?: string | null; lastSync?: number | null; scope?: string } }>(
+      `/profiles/${pid}/integrations`,
+    ),
+  googleAuthUrl: (pid: string) =>
+    req<{ url: string }>(`/profiles/${pid}/google/auth-url`, { method: "POST" }),
+  googleSync: (pid: string) =>
+    req<{ ok: boolean; calendar: number; gmail: number; digest: string }>(`/profiles/${pid}/google/sync`, {
+      method: "POST",
+    }),
+  googleDisconnect: (pid: string) =>
+    req(`/profiles/${pid}/google`, { method: "DELETE" }),
+  // stored emails (from sync / offline import)
+  listEmails: (pid: string) =>
+    req<{ emails: { id: string; ts: number; from: string; subject: string; snippet: string; source: string }[] }>(
+      `/profiles/${pid}/emails`,
+    ),
+  // offline test: import a Google Takeout folder (.ics + .mbox), no API connection
+  googleImportExport: (pid: string, dir: string, days?: number) =>
+    req<{ ok: boolean; calendar: number; gmail: number; digest: string; parsedEvents: number; parsedEmails: number; windowDays: number; windowedEvents: number; windowedEmails: number }>(
+      `/profiles/${pid}/google/import-export`,
+      { method: "POST", body: JSON.stringify({ dir, days }) },
+    ),
+
+  // scheduled daily tasks (sync, memory refresh, briefing…)
+  listTasks: (pid: string) =>
+    req<{ tasks: { name: string; label: string; enabled: boolean; lastRun: number | null; lastResult: string | null }[] }>(
+      `/profiles/${pid}/tasks`,
+    ),
+  setTask: (pid: string, name: string, enabled: boolean) =>
+    req(`/profiles/${pid}/tasks/${name}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  runTask: (pid: string, name: string) =>
+    req<{ ok: boolean; name: string; result: string; lastRun: number }>(`/profiles/${pid}/tasks/${name}/run`, {
+      method: "POST",
+    }),
+  runAllTasks: (pid: string) =>
+    req<{ ok: boolean; ran: { name: string; result: string }[] }>(`/profiles/${pid}/tasks/run-all`, { method: "POST" }),
+
   // look up a word/phrase across this profile's context + the web
   lookup: (pid: string, q: string) =>
     req<{

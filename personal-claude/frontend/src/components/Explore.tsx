@@ -9,6 +9,7 @@ import {
   Database,
   X,
   ArrowRight,
+  ArrowLeft,
   Maximize2,
   Shuffle,
   MessageSquarePlus,
@@ -22,9 +23,12 @@ import {
   Brain,
   Check,
   Plus,
+  Mail,
+  Bell,
 } from "lucide-react";
 import { useStore } from "../store";
-import { forceLayout, relTime, occurrencesInRange } from "../utils";
+import { api } from "../services/api";
+import { forceLayout, relTime, occurrencesInRange, md } from "../utils";
 import type { Conversation, Repeat } from "../types";
 import { ImportArchive } from "./ImportArchive";
 
@@ -235,8 +239,13 @@ function PipelineFlow({
   selectedId?: string | null;
   onSelectId?: (id: string) => void;
 }) {
-  const { memory, memoryFiles, notes } = useStore();
+  const { memory, memoryFiles, notes, reminders, toggleReminder, activeProfile } = useStore();
   const [localSel, setLocalSel] = useState<string | null>(null);
+  const [detail, setDetail] = useState<null | "stm" | "ltm" | "reminders" | "gmail">(null);
+  const [emails, setEmails] = useState<{ id: string; ts: number; from: string; subject: string; snippet: string; source: string }[]>([]);
+  useEffect(() => {
+    if (detail === "gmail" && activeProfile) api.listEmails(activeProfile.id).then((r) => setEmails(r.emails)).catch(() => {});
+  }, [detail, activeProfile]);
   // Controlled by the sidebar's "show in pipeline" when provided, else local.
   const selId = selectedId ?? localSel;
   const setSelId = (id: string) => (onSelectId ? onSelectId(id) : setLocalSel(id));
@@ -318,14 +327,27 @@ function PipelineFlow({
       }
     : null;
 
-  // stage layout in a 100 x 50 coordinate space (container is aspect-ratio 2/1)
+  // external-data flow counts (Gmail/Calendar sync → reminders)
+  const emailTasks = reminders.filter((r) => r.source === "gmail").length;
+  const calEvents = reminders.filter((r) => r.source === "gcal").length;
+  const openReminders = reminders.filter((r) => !r.done).length;
+
+  // Two lanes in a 100 x 50 space: conversations (top) + external data (bottom),
+  // both converging on short- & long-term memory. `ext` nodes aren't part of a
+  // single conversation's trace (no per-chat ✓).
   const nodes = [
-    { key: "conv", x: 10, y: 25, icon: <MessageSquare size={18} />, label: "Conversation", value: stats.total, sub: "messages in", done: done?.conv, nav: null as ExploreTab | null, tip: trace ? `${trace.msgs} msgs` : "" },
-    { key: "summarize", x: 30, y: 25, icon: <FileText size={18} />, label: "Summarize", value: stats.summarized, sub: `of ${stats.total} summarized`, done: done?.summarize, nav: null as ExploreTab | null, tip: trace?.summary ? cleanSnippet(trace.summary, 46) : "—" },
-    { key: "topics", x: 50, y: 25, icon: <Tag size={18} />, label: "Topics extract", value: stats.distinctTopics, sub: `${stats.tagged} chats tagged`, done: done?.topics, nav: "topics" as ExploreTab, tip: trace?.topics.length ? trace.topics.slice(0, 3).join(", ") : "—" },
-    { key: "kg", x: 78, y: 12, icon: <Network size={18} />, label: "Knowledge graph", value: stats.edges, sub: `${stats.linked} chats linked`, done: done?.kg, nav: "graph" as ExploreTab, tip: trace ? `${trace.related.length} related` : "" },
-    { key: "stm", x: 68, y: 40, icon: <Clock size={18} />, label: "Short-term (STM)", value: stats.recent, sub: memoryFiles.stmUpdated ? `built ${relTime(memoryFiles.stmUpdated)}` : "recent activity", done: done?.stm, nav: null as ExploreTab | null, tip: done?.stm ? "in window" : "aged out" },
-    { key: "ltm", x: 90, y: 40, icon: <Brain size={18} />, label: "Long-term (LTM)", value: stats.memorized, sub: memoryFiles.ltmUpdated ? `built ${relTime(memoryFiles.ltmUpdated)}` : "memorized", done: done?.ltm, nav: null as ExploreTab | null, tip: trace?.memEntries.length ? "memorized" : "—" },
+    // conversation lane
+    { key: "conv", x: 8, y: 14, icon: <MessageSquare size={17} />, label: "Conversation", value: stats.total, sub: "chats", done: done?.conv, ext: false, nav: null as ExploreTab | null, dialog: null, tip: trace ? `${trace.msgs} msgs` : "" },
+    { key: "summarize", x: 26, y: 14, icon: <FileText size={17} />, label: "Summarize", value: stats.summarized, sub: `of ${stats.total}`, done: done?.summarize, ext: false, nav: null as ExploreTab | null, dialog: null, tip: trace?.summary ? cleanSnippet(trace.summary, 40) : "—" },
+    { key: "topics", x: 45, y: 14, icon: <Tag size={17} />, label: "Topics", value: stats.distinctTopics, sub: `${stats.tagged} tagged`, done: done?.topics, ext: false, nav: "topics" as ExploreTab, dialog: null, tip: trace?.topics.length ? trace.topics.slice(0, 3).join(", ") : "—" },
+    { key: "kg", x: 66, y: 7, icon: <Network size={17} />, label: "Knowledge graph", value: stats.edges, sub: `${stats.linked} linked`, done: done?.kg, ext: false, nav: "graph" as ExploreTab, dialog: null, tip: trace ? `${trace.related.length} related` : "" },
+    // external-data lane
+    { key: "gmail", x: 8, y: 33, icon: <Mail size={17} />, label: "Gmail", value: emailTasks, sub: "email tasks", done: null, ext: true, nav: null as ExploreTab | null, dialog: "gmail" as const, tip: "" },
+    { key: "calendar", x: 8, y: 45, icon: <CalIcon size={17} />, label: "Calendar", value: calEvents, sub: "events", done: null, ext: true, nav: "calendar" as ExploreTab, dialog: null, tip: "" },
+    { key: "reminders", x: 28, y: 39, icon: <Bell size={17} />, label: "Reminders / tasks", value: openReminders, sub: "open", done: null, ext: true, nav: null as ExploreTab | null, dialog: "reminders" as const, tip: "" },
+    // memory (both lanes converge)
+    { key: "stm", x: 62, y: 28, icon: <Clock size={17} />, label: "Short-term (STM)", value: stats.recent, sub: memoryFiles.stmUpdated ? `built ${relTime(memoryFiles.stmUpdated)}` : "recent", done: done?.stm, ext: false, nav: null as ExploreTab | null, dialog: "stm" as const, tip: done?.stm ? "in window" : "aged out" },
+    { key: "ltm", x: 85, y: 32, icon: <Brain size={17} />, label: "Long-term (LTM)", value: stats.memorized, sub: memoryFiles.ltmUpdated ? `built ${relTime(memoryFiles.ltmUpdated)}` : "memorized", done: done?.ltm, ext: false, nav: null as ExploreTab | null, dialog: "ltm" as const, tip: trace?.memEntries.length ? "memorized" : "—" },
   ];
   const pos: Record<string, { x: number; y: number }> = Object.fromEntries(nodes.map((n) => [n.key, { x: n.x, y: n.y }]));
   const edge = (a: string, b: string, bow = 0) => {
@@ -340,6 +362,9 @@ function PipelineFlow({
     { d: edge("summarize", "topics"), on: !!done?.topics },
     { d: edge("topics", "kg", -2), on: !!done?.kg },
     { d: edge("topics", "stm", 2), on: !!done?.stm },
+    { d: edge("gmail", "reminders", -1), on: true },
+    { d: edge("calendar", "reminders", 1), on: true },
+    { d: edge("reminders", "stm", -2), on: true },
     { d: edge("stm", "ltm"), on: !!done?.ltm },
   ];
 
@@ -374,14 +399,14 @@ function PipelineFlow({
         {nodes.map((n) => (
           <div
             key={n.key}
-            className={`pf-node ${n.done ? "done" : "pending"} ${sel && !n.done ? "unreached" : ""} ${n.nav ? "clickable" : ""}`}
+            className={`pf-node ${n.ext ? "pf-ext" : n.done ? "done" : "pending"} ${sel && !n.ext && !n.done ? "unreached" : ""} ${n.nav || n.dialog ? "clickable" : ""}`}
             style={{ left: `${n.x}%`, top: `${(n.y / 50) * 100}%` }}
-            onClick={() => n.nav && onTabChange(n.nav)}
-            title={n.nav ? "Open this view" : undefined}
+            onClick={() => (n.dialog ? setDetail(n.dialog) : n.nav ? onTabChange(n.nav) : undefined)}
+            title={n.dialog ? "Open contents" : n.nav ? "Open this view" : undefined}
           >
             <div className="pf-node-head">
               <span className="pf-ico">{n.icon}</span>
-              {sel && (
+              {sel && !n.ext && (
                 <span className={`pf-flag ${n.done ? "done" : ""}`}>
                   {n.done ? <Check size={12} /> : "○"}
                 </span>
@@ -390,7 +415,7 @@ function PipelineFlow({
             <div className="pf-num">{n.value}</div>
             <div className="pf-label">{n.label}</div>
             <div className="pf-sub">{n.sub}</div>
-            {sel && <div className="pf-trace" title={n.tip}>{n.tip}</div>}
+            {sel && !n.ext && <div className="pf-trace" title={n.tip}>{n.tip}</div>}
           </div>
         ))}
       </div>
@@ -458,8 +483,91 @@ function PipelineFlow({
       )}
 
       <div className="pf-legend">
-        <span><i className="pf-leg-dot" /> live flow — each conversation is summarized, mined for topics, woven into the knowledge graph, and folded into short- &amp; long-term memory.</span>
+        <span><i className="pf-leg-dot" /> Two lanes feed memory: <b>conversations</b> are summarized → topics → knowledge graph; <b>Gmail &amp; Calendar</b> sync into reminders/tasks. Both fold into short- &amp; long-term memory (daily). Click STM/LTM/Reminders/Gmail to see their contents.</span>
       </div>
+
+      {detail && (
+        <div className="modal-backdrop" onClick={() => setDetail(null)}>
+          <div className="modal pf-detail-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-head">
+              <button className="btn-secondary pf-back" onClick={() => setDetail(null)}>
+                <ArrowLeft size={14} /> Back
+              </button>
+              <h3>
+                {detail === "stm" && <><Clock size={16} /> Short-term memory</>}
+                {detail === "ltm" && <><Brain size={16} /> Long-term memory</>}
+                {detail === "reminders" && <><Bell size={16} /> Reminders &amp; tasks</>}
+                {detail === "gmail" && <><Mail size={16} /> Email tasks &amp; digest</>}
+              </h3>
+              <button className="icon-btn" onClick={() => setDetail(null)} aria-label="close"><X size={18} /></button>
+            </header>
+            <section className="settings-section pf-detail-body">
+              {(detail === "stm" || detail === "ltm") && (
+                <div
+                  className="pf-md"
+                  dangerouslySetInnerHTML={{ __html: md((detail === "stm" ? memoryFiles.stm : memoryFiles.ltm) || "_(empty)_") }}
+                />
+              )}
+              {detail === "reminders" && (() => {
+                const list = reminders.slice().sort((a, b) => Number(a.done) - Number(b.done) || a.dueAt - b.dueAt);
+                return list.length === 0 ? (
+                  <div className="lookup-muted">No reminders yet.</div>
+                ) : (
+                  <ul className="pf-rem-list">
+                    {list.map((r) => (
+                      <li key={r.id} className={r.done ? "done" : ""}>
+                        <input type="checkbox" checked={r.done} onChange={() => toggleReminder(r.id)} />
+                        <span className="pf-rem-text">{r.text}</span>
+                        <span className="pf-rem-due">{new Date(r.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}{r.source && r.source !== "manual" ? ` · ${r.source}` : ""}</span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+              {detail === "gmail" && (() => {
+                const digest = notes.find((n) => /Inbox digest/.test(n.title))?.body;
+                const tasks = reminders.filter((r) => r.source === "gmail").sort((a, b) => Number(a.done) - Number(b.done) || a.dueAt - b.dueAt);
+                return (
+                  <>
+                    {digest && <div className="pf-digest"><b>📥 Inbox digest</b><p>{digest}</p></div>}
+                    <div className="pf-sec-h">Emails <span className="pf-count">{emails.length}</span></div>
+                    {emails.length === 0 ? (
+                      <div className="lookup-muted">No emails stored yet — run an email sync or import.</div>
+                    ) : (
+                      <ul className="pf-email-list">
+                        {emails.map((e) => (
+                          <li key={e.id}>
+                            <div className="pf-email-top">
+                              <span className="pf-email-subj">{e.subject || "(no subject)"}</span>
+                              <span className="pf-rem-due">{e.ts ? new Date(e.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>
+                            </div>
+                            {e.from && <div className="pf-email-from">{e.from}</div>}
+                            {e.snippet && <div className="pf-email-snip">{e.snippet}</div>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {tasks.length > 0 && (
+                      <>
+                        <div className="pf-sec-h">Extracted tasks <span className="pf-count">{tasks.length}</span></div>
+                        <ul className="pf-rem-list">
+                          {tasks.map((r) => (
+                            <li key={r.id} className={r.done ? "done" : ""}>
+                              <input type="checkbox" checked={r.done} onChange={() => toggleReminder(r.id)} />
+                              <span className="pf-rem-text">{r.text}</span>
+                              <span className="pf-rem-due">{new Date(r.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </section>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -490,6 +598,7 @@ function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: s
   const [aText, setAText] = useState("");
   const [aTime, setATime] = useState("09:00");
   const [aRepeat, setARepeat] = useState<Repeat>("none");
+  const [kind, setKind] = useState<"all" | "events" | "tasks">("all");
   const openAdd = (k: number) => {
     setAddDay(k);
     setAText("");
@@ -518,13 +627,15 @@ function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: s
     const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
     const m = new Map<number, typeof reminders>();
     for (const r of reminders) {
+      if (kind === "events" && r.source !== "gcal") continue;
+      if (kind === "tasks" && r.source === "gcal") continue;
       for (const t of occurrencesInRange(r, monthStart, monthEnd)) {
         const k = sod(t);
         (m.get(k) ?? m.set(k, []).get(k)!).push(r);
       }
     }
     return m;
-  }, [reminders, year, month]);
+  }, [reminders, year, month, kind]);
   const today = sod(Date.now());
 
   const cells: (number | null)[] = [];
@@ -541,6 +652,13 @@ function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: s
         <button className="icon-btn" onClick={() => setOff((o) => o + 1)}>
           <ChevronRight size={18} />
         </button>
+        <div className="cal-kind-filter">
+          {(["all", "events", "tasks"] as const).map((k) => (
+            <button key={k} className={`src-chip ${kind === k ? "active" : ""}`} onClick={() => setKind(k)}>
+              {k === "all" ? "All" : k === "events" ? "📅 Events" : "✓ Tasks"}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="cal-grid cal-dow">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
@@ -640,15 +758,43 @@ function CalendarView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: s
 // ---- Weekly (recent week agenda) ------------------------------------------
 
 function WeeklyView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: string) => void }) {
+  const { reminders, toggleReminder, addReminder, activeProfile } = useStore();
   const [off, setOff] = useState(0);
+  const [kind, setKind] = useState<"all" | "events" | "tasks">("all");
+  const [addDay, setAddDay] = useState<number | null>(null);
+  const [aText, setAText] = useState("");
+  const [aTime, setATime] = useState("09:00");
+  const [aRepeat, setARepeat] = useState<Repeat>("none");
   const weekStart = sow(Date.now()) + off * 7 * DAY;
   const map = useMemo(() => byDayMap(chats), [chats]);
+  const remByDay = useMemo(() => {
+    const m = new Map<number, typeof reminders>();
+    for (const r of reminders) {
+      if (kind === "events" && r.source !== "gcal") continue;
+      if (kind === "tasks" && r.source === "gcal") continue;
+      for (const t of occurrencesInRange(r, weekStart, weekStart + 7 * DAY - 1)) {
+        const k = sod(t);
+        (m.get(k) ?? m.set(k, []).get(k)!).push(r);
+      }
+    }
+    return m;
+  }, [reminders, weekStart, kind]);
   const today = sod(Date.now());
   const days = Array.from({ length: 7 }, (_, i) => weekStart + i * DAY);
   const label =
     off === 0
       ? "This week"
       : `${new Date(weekStart).toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${new Date(weekStart + 6 * DAY).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+
+  const openAdd = (k: number) => { setAddDay(k); setAText(""); setATime("09:00"); setARepeat("none"); };
+  const submitAdd = () => {
+    if (!aText.trim() || addDay == null || !activeProfile) return;
+    const due = new Date(addDay);
+    const [h, m] = aTime.split(":");
+    due.setHours(Number(h) || 9, Number(m) || 0, 0, 0);
+    addReminder({ profileId: activeProfile.id, text: aText.trim(), dueAt: due.getTime(), done: false, repeat: aRepeat });
+    setAddDay(null);
+  };
 
   return (
     <div className="week">
@@ -660,17 +806,38 @@ function WeeklyView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: str
         <button className="icon-btn" onClick={() => setOff((o) => o + 1)}>
           <ChevronRight size={18} />
         </button>
+        <div className="cal-kind-filter">
+          {(["all", "events", "tasks"] as const).map((k) => (
+            <button key={k} className={`src-chip ${kind === k ? "active" : ""}`} onClick={() => setKind(k)}>
+              {k === "all" ? "All" : k === "events" ? "📅 Events" : "✓ Tasks"}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="week-grid">
         {days.map((d) => {
           const list = (map.get(d) || []).slice().sort((a, b) => b.updatedAt - a.updatedAt);
+          const rem = remByDay.get(d) || [];
           return (
             <div key={d} className={`week-col ${d === today ? "today" : ""}`}>
               <div className="week-col-head">
                 <span>{new Date(d).toLocaleDateString(undefined, { weekday: "short" })}</span>
                 <strong>{new Date(d).getDate()}</strong>
+                <button className="cal-add" title="Add task / reminder" onClick={() => openAdd(d)}>
+                  <Plus size={12} />
+                </button>
               </div>
               <div className="week-col-body">
+                {rem.map((r) => (
+                  <button
+                    key={r.id}
+                    className={`cal-rem ${r.done ? "done" : ""}`}
+                    title={r.text}
+                    onClick={() => toggleReminder(r.id)}
+                  >
+                    {r.source === "gcal" || r.source === "gmail" ? r.text : `🔔 ${r.text}`}
+                  </button>
+                ))}
                 {list.map((c) => (
                   <button
                     key={c.id}
@@ -682,12 +849,46 @@ function WeeklyView({ chats, onOpen }: { chats: Conversation[]; onOpen: (id: str
                     <span className="week-card-meta">{c.messages.length} msgs</span>
                   </button>
                 ))}
-                {list.length === 0 && <div className="week-empty">·</div>}
+                {list.length === 0 && rem.length === 0 && <div className="week-empty">·</div>}
               </div>
             </div>
           );
         })}
       </div>
+
+      {addDay != null && (
+        <div className="modal-backdrop" onClick={() => setAddDay(null)}>
+          <div className="modal cal-add-modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-head">
+              <h3><CalIcon size={16} /> Add for {new Date(addDay).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</h3>
+              <button className="icon-btn" onClick={() => setAddDay(null)} aria-label="close"><X size={18} /></button>
+            </header>
+            <section className="settings-section">
+              <label className="field">
+                <span>Task / reminder</span>
+                <input autoFocus value={aText} onChange={(e) => setAText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitAdd()} placeholder="e.g. Pay rent, Dentist…" />
+              </label>
+              <div className="cal-add-row">
+                <label className="field"><span>Time</span><input type="time" value={aTime} onChange={(e) => setATime(e.target.value)} /></label>
+                <label className="field">
+                  <span>Repeat</span>
+                  <select value={aRepeat} onChange={(e) => setARepeat(e.target.value as Repeat)}>
+                    {(["none", "daily", "weekly", "monthly", "yearly"] as Repeat[]).map((r) => (
+                      <option key={r} value={r}>{r === "none" ? "Doesn't repeat" : `Repeats ${r}`}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="editor-actions">
+                <button className="btn-secondary" onClick={() => setAddDay(null)}>Cancel</button>
+                <button className="new-chat-btn" style={{ margin: 0 }} disabled={!aText.trim()} onClick={submitAdd}>
+                  <Plus size={15} /> Add
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -364,6 +364,47 @@ select {
   align-items: center;
   gap: 5px;
 }
+/* scheduled tasks */
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.12));
+}
+.task-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.task-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-run {
+  flex-shrink: 0;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.task-run:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .field-avatar {
   width: 90px;
   flex-shrink: 0;
@@ -968,6 +1009,22 @@ select {
   margin-left: 6px;
   color: var(--accent);
   font-weight: 600;
+}
+.rem-filter {
+  margin: 2px 0 10px;
+}
+.cal-kind-filter {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.week-col:hover .cal-add {
+  opacity: 1;
+}
+.week-col-body .cal-rem {
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
 }
 .reminder-acts {
   display: flex;
@@ -1976,9 +2033,111 @@ select {
 }
 .pf-legend-sel { color: var(--text); }
 
+/* pipeline node → content dialog */
+.pf-detail-modal {
+  width: min(640px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.pf-detail-modal .modal-head h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pf-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+}
+.pf-detail-body {
+  overflow: auto;
+}
+.pf-md {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.pf-md h1, .pf-md h2, .pf-md h3 { font-size: 14px; margin: 12px 0 4px; }
+.pf-md ul { padding-left: 18px; margin: 6px 0; }
+.pf-digest {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.pf-digest p { margin: 4px 0 0; }
+.pf-rem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf-rem-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.12));
+  font-size: 13px;
+}
+.pf-rem-list li.done .pf-rem-text { text-decoration: line-through; opacity: 0.6; }
+.pf-rem-text { flex: 1; min-width: 0; }
+.pf-rem-due { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.pf-sec-h {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin: 14px 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pf-count {
+  background: var(--surface-2, rgba(127,127,127,0.18));
+  color: var(--text-faint);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+.pf-email-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf-email-list li {
+  border: 1px solid var(--border, rgba(127,127,127,0.16));
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.pf-email-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pf-email-subj { font-weight: 600; font-size: 13px; }
+.pf-email-from { font-size: 11.5px; color: var(--accent); margin-top: 1px; }
+.pf-email-snip { font-size: 12px; color: var(--text-faint); margin-top: 3px; }
+
 .pf-node.unreached {
   opacity: 0.5;
   border-style: dashed;
+}
+.pf-node.pf-ext {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border, #888));
+}
+.pf-node.pf-ext .pf-ico {
+  background: color-mix(in srgb, #4a8df0 16%, transparent);
+  color: #4a8df0;
 }
 .pf-trace {
   margin-top: 5px;

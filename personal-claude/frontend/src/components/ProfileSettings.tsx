@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Check, Unlink, Upload, Plus, Trash2, Download } from "lucide-react";
+import { X, Check, Unlink, Upload, Plus, Trash2, Download, Mail, RefreshCw, Loader, Clock, Play } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../services/api";
 import type { ProfileDetails } from "../services/api";
@@ -37,7 +37,107 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
   const [ctxSaved, setCtxSaved] = useState(false);
   const [details, setDetails] = useState<ProfileDetails>({});
   const [detailsSaved, setDetailsSaved] = useState(false);
+  const [gStatus, setGStatus] = useState<{ configured: boolean; connected: boolean; email?: string | null; lastSync?: number | null } | null>(null);
+  const [gBusy, setGBusy] = useState<null | "sync" | "connect" | "import">(null);
+  const [gMsg, setGMsg] = useState<string | null>(null);
+  const [gDir, setGDir] = useState("exports/google/Takeout");
+  const [tasks, setTasks] = useState<{ name: string; label: string; enabled: boolean; lastRun: number | null; lastResult: string | null }[]>([]);
+  const [taskBusy, setTaskBusy] = useState<string | null>(null);
+
+  const loadTasks = () => api.listTasks(profile.id).then((r) => setTasks(r.tasks)).catch(() => {});
+  const toggleTask = (name: string, enabled: boolean) => {
+    setTasks((ts) => ts.map((t) => (t.name === name ? { ...t, enabled } : t)));
+    api.setTask(profile.id, name, enabled).catch(() => {});
+  };
+  async function runTask(name: string) {
+    setTaskBusy(name);
+    try {
+      await api.runTask(profile.id, name);
+      await loadTasks();
+      reload();
+    } catch { /* */ } finally {
+      setTaskBusy(null);
+    }
+  }
+  async function runAllTasks() {
+    setTaskBusy("*");
+    try {
+      await api.runAllTasks(profile.id);
+      await loadTasks();
+      reload();
+    } catch { /* */ } finally {
+      setTaskBusy(null);
+    }
+  }
   const configured = isGoogleConfigured();
+
+  const loadG = () =>
+    api.googleStatus(profile.id)
+      .then((r) => setGStatus({ configured: r.configured, ...r.google }))
+      .catch(() => {});
+  async function connectGoogle() {
+    setGBusy("connect");
+    setGMsg(null);
+    try {
+      const { url } = await api.googleAuthUrl(profile.id);
+      const popup = window.open(url, "google-connect", "width=520,height=640");
+      // poll for completion
+      let tries = 0;
+      const iv = setInterval(async () => {
+        tries++;
+        try {
+          const r = await api.googleStatus(profile.id);
+          if (r.google.connected) {
+            setGStatus({ configured: r.configured, ...r.google });
+            setGMsg("Connected ✓ — run a sync to pull your calendar & email.");
+            clearInterval(iv);
+            setGBusy(null);
+            popup?.close();
+          }
+        } catch { /* */ }
+        if (tries > 60 || popup?.closed) {
+          clearInterval(iv);
+          setGBusy(null);
+          loadG();
+        }
+      }, 2000);
+    } catch (e) {
+      setGMsg((e as Error).message);
+      setGBusy(null);
+    }
+  }
+  async function syncGoogle() {
+    setGBusy("sync");
+    setGMsg(null);
+    try {
+      const r = await api.googleSync(profile.id);
+      setGMsg(`Synced · ${r.calendar} calendar event${r.calendar === 1 ? "" : "s"} · ${r.gmail} email task${r.gmail === 1 ? "" : "s"}${r.digest ? " · inbox digest saved" : ""}.`);
+      reload();
+      loadG();
+    } catch (e) {
+      setGMsg(`Sync failed: ${(e as Error).message}`);
+    } finally {
+      setGBusy(null);
+    }
+  }
+  async function disconnectGoogle() {
+    await api.googleDisconnect(profile.id).catch(() => {});
+    setGStatus((s) => (s ? { ...s, connected: false, email: null } : s));
+    setGMsg(null);
+  }
+  async function importGoogleExport() {
+    setGBusy("import");
+    setGMsg(null);
+    try {
+      const r = await api.googleImportExport(profile.id, gDir.trim());
+      setGMsg(`Last ${r.windowDays}d: ${r.windowedEmails}/${r.parsedEmails} emails + ${r.windowedEvents} events → ${r.calendar} calendar + ${r.gmail} email reminder${r.gmail === 1 ? "" : "s"}${r.digest ? " · inbox digest saved" : ""}.`);
+      reload();
+    } catch (e) {
+      setGMsg(`Import failed: ${(e as Error).message}`);
+    } finally {
+      setGBusy(null);
+    }
+  }
 
   const patchDetails = (p: Partial<ProfileDetails>) => setDetails((d) => ({ ...d, ...p }));
   const setSocial = (i: number, p: Partial<{ label: string; url: string }>) =>
@@ -71,6 +171,9 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     api.getContext(profile.id).then((r) => setCtx(r.content)).catch(() => {});
     api.getDetails(profile.id).then((d) => setDetails(d || {})).catch(() => {});
+    loadG();
+    loadTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile.id]);
 
   const exportName = (suffix: string) =>
@@ -214,6 +317,94 @@ export function ProfileSettings({ onClose }: { onClose: () => void }) {
               {error && <div className="settings-error">{error}</div>}
             </div>
           )}
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-label">Gmail &amp; Calendar (daily sync)</div>
+          <p className="settings-hint">
+            Connect this profile's Google account (read-only) to pull <strong>calendar
+            events</strong> and <strong>email action-items</strong> into your reminders, plus a
+            daily <strong>inbox digest</strong>. Syncs automatically each day; refresh
+            tokens are stored encrypted, locally.
+          </p>
+          {gStatus && !gStatus.configured ? (
+            <div className="settings-note">
+              Server isn't configured for data access — set <code>GOOGLE_CLIENT_SECRET</code> and add{" "}
+              <code>http://localhost:8787/api/google/callback</code> as an Authorized redirect URI.
+            </div>
+          ) : gStatus?.connected ? (
+            <>
+              <div className="google-linked">
+                <span className="google-pic placeholder"><Mail size={15} /></span>
+                <div className="google-id">
+                  <div className="google-name"><Check size={13} className="ok" /> Connected</div>
+                  <div className="google-email">
+                    {gStatus.email || "Google account"}
+                    {gStatus.lastSync ? ` · last sync ${new Date(gStatus.lastSync).toLocaleString()}` : " · not synced yet"}
+                  </div>
+                </div>
+                <button className="btn-secondary" onClick={disconnectGoogle}>
+                  <Unlink size={14} /> Disconnect
+                </button>
+              </div>
+              <button className="btn-secondary" disabled={gBusy !== null} onClick={syncGoogle}>
+                {gBusy === "sync" ? <Loader size={14} className="spin" /> : <RefreshCw size={14} />}{" "}
+                {gBusy === "sync" ? "Syncing…" : "Sync now"}
+              </button>
+            </>
+          ) : (
+            <button className="btn-secondary" disabled={gBusy !== null} onClick={connectGoogle}>
+              {gBusy === "connect" ? <Loader size={14} className="spin" /> : <Mail size={14} />}{" "}
+              {gBusy === "connect" ? "Waiting for Google…" : "Connect Gmail & Calendar"}
+            </button>
+          )}
+
+          <div className="settings-sublabel">Test with an export (no connection)</div>
+          <p className="settings-hint">
+            Drop a <strong>Google Takeout</strong> folder under <code>exports/</code> (Calendar
+            <code>.ics</code> + Gmail <code>.mbox</code>) and import it to preview exactly what the
+            live sync would create — without any API setup.
+          </p>
+          <div className="reminder-add-row">
+            <input
+              style={{ flex: 1, minWidth: 0 }}
+              value={gDir}
+              onChange={(e) => setGDir(e.target.value)}
+              placeholder="exports/google/Takeout"
+            />
+            <button className="btn-secondary" disabled={gBusy !== null || !gDir.trim()} onClick={importGoogleExport}>
+              {gBusy === "import" ? <Loader size={14} className="spin" /> : <Upload size={14} />}{" "}
+              {gBusy === "import" ? "Importing…" : "Import & test"}
+            </button>
+          </div>
+          {gMsg && <div className="settings-success">{gMsg}</div>}
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-label">
+            <Clock size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />
+            Scheduled daily tasks
+          </div>
+          <p className="settings-hint">
+            Runs automatically each day (and on demand). Toggle which jobs run for this profile.
+          </p>
+          {tasks.map((t) => (
+            <div className="task-row" key={t.name}>
+              <label className="task-toggle">
+                <input type="checkbox" checked={t.enabled} onChange={(e) => toggleTask(t.name, e.target.checked)} />
+                <span>{t.label}</span>
+              </label>
+              <span className="task-meta">
+                {t.lastRun ? `${new Date(t.lastRun).toLocaleString()} · ${t.lastResult || ""}` : "not run yet"}
+              </span>
+              <button className="task-run" title="Run now" disabled={taskBusy !== null} onClick={() => runTask(t.name)}>
+                {taskBusy === t.name ? <Loader size={13} className="spin" /> : <Play size={13} />}
+              </button>
+            </div>
+          ))}
+          <button className="btn-secondary" disabled={taskBusy !== null} onClick={runAllTasks}>
+            {taskBusy === "*" ? <Loader size={14} className="spin" /> : <RefreshCw size={14} />} Run all now
+          </button>
         </section>
 
         <section className="settings-section">

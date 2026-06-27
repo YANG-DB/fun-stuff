@@ -139,6 +139,8 @@ export interface Reminder {
   done: boolean;
   /** Recurrence: rolls the due date forward when completed. */
   repeat?: Repeat;
+  /** Provenance: manual | gcal (calendar event) | gmail (email task). */
+  source?: "manual" | "gcal" | "gmail";
   conversationId?: string;
 }
 

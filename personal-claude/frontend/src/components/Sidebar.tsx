@@ -923,12 +923,19 @@ function RemindersList({ profileId }: { profileId: string }) {
   const [date, setDate] = useState(ymd(Date.now() + 86_400_000)); // tomorrow
   const [time, setTime] = useState("09:00");
   const [repeat, setRepeat] = useState<Repeat>("none");
+  const [kind, setKind] = useState<"all" | "events" | "tasks">("all");
   const [notif, setNotif] = useState<string>(
     typeof Notification !== "undefined" ? Notification.permission : "denied",
   );
 
-  const items = reminders
-    .filter((r) => r.profileId === profileId)
+  const mine = reminders.filter((r) => r.profileId === profileId);
+  const counts = {
+    all: mine.length,
+    events: mine.filter((r) => r.source === "gcal").length,
+    tasks: mine.filter((r) => r.source !== "gcal").length,
+  };
+  const items = mine
+    .filter((r) => kind === "all" || (kind === "events" ? r.source === "gcal" : r.source !== "gcal"))
     .sort((a, b) => Number(a.done) - Number(b.done) || a.dueAt - b.dueAt);
 
   return (
@@ -974,6 +981,23 @@ function RemindersList({ profileId }: { profileId: string }) {
           </button>
         </div>
       </form>
+
+      <div className="sb-srcfilter rem-filter">
+        {([
+          ["all", "All"],
+          ["events", "📅 Events"],
+          ["tasks", "✓ Tasks"],
+        ] as const).map(([k, label]) => (
+          <button
+            key={k}
+            className={`src-chip ${kind === k ? "active" : ""}`}
+            onClick={() => setKind(k)}
+            title={k === "events" ? "Calendar events" : k === "tasks" ? "Reminders & email tasks" : "Everything"}
+          >
+            {label} {!!counts[k] && <b>{counts[k]}</b>}
+          </button>
+        ))}
+      </div>
 
       {items.length === 0 ? (
         <div className="empty-hint">Nothing due. You're clear.</div>

@@ -293,6 +293,29 @@ function migrateProfileDb(db) {
       body            TEXT NOT NULL DEFAULT '',
       created_at      INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS integrations (
+      provider     TEXT PRIMARY KEY,
+      data         TEXT NOT NULL DEFAULT '{}',
+      connected_at INTEGER,
+      last_sync    INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      name        TEXT PRIMARY KEY,
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      last_run    INTEGER,
+      last_result TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS emails (
+      id        TEXT PRIMARY KEY,
+      ts        INTEGER,
+      from_addr TEXT,
+      subject   TEXT,
+      snippet   TEXT,
+      source    TEXT NOT NULL DEFAULT 'gmail'
+    );
   `);
 
   // Upgrade DBs created before token tracking existed.
@@ -326,6 +349,17 @@ function migrateProfileDb(db) {
   // Recurrence for reminders/events (none | daily | weekly | monthly | yearly).
   try {
     db.exec("ALTER TABLE reminders ADD COLUMN repeat TEXT NOT NULL DEFAULT 'none'");
+  } catch {
+    /* column already exists */
+  }
+  // Provenance for reminders synced from Gmail/Calendar (dedupe + labelling).
+  try {
+    db.exec("ALTER TABLE reminders ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
+  } catch {
+    /* column already exists */
+  }
+  try {
+    db.exec("ALTER TABLE reminders ADD COLUMN source_ref TEXT");
   } catch {
     /* column already exists */
   }

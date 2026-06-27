@@ -6,6 +6,9 @@
 # ---- personal data: chat archives & exports ----
 exports/
 
+# ---- personal bios / family relations (per-profile context) ----
+bio/
+
 # ---- per-profile local data (in case it's ever placed in-repo) ----
 data/
 *.db
