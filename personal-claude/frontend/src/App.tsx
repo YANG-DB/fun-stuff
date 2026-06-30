@@ -14,7 +14,7 @@ export function App() {
     null,
   );
   const [mainView, setMainView] = useState<"explore" | "chat">("explore");
-  const [exploreTab, setExploreTab] = useState<ExploreTab>("calendar");
+  const [exploreTab, setExploreTab] = useState<ExploreTab>("summary");
   const [pipelineConvId, setPipelineConvId] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState<"normal" | "hidden" | "full">("normal");
   // Where to return when leaving a conversation (the screen we came from).

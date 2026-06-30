@@ -26,18 +26,39 @@ import {
   Mail,
   Bell,
   Search,
+  User,
+  Users,
+  Sparkles,
+  History,
+  CalendarClock,
+  Star,
+  Pin,
+  MapPin,
+  Briefcase,
+  Link as LinkIcon,
+  Linkedin,
+  Inbox,
+  ThumbsUp,
+  ThumbsDown,
+  RefreshCw,
+  Copy,
+  Send,
+  Trash2,
+  Wand2,
 } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../services/api";
+import type { ProfileDetails, LiMessage, LiPost, LiTemplate } from "../services/api";
+import { streamChat } from "../services/chatService";
 import { forceLayout, relTime, occurrencesInRange, md } from "../utils";
-import type { Conversation, Repeat } from "../types";
+import type { Conversation, Repeat, Message, Profile, ModelId } from "../types";
 import { ImportArchive } from "./ImportArchive";
 
 function cleanSnippet(s: string, n = 150): string {
   return s.replace(/[#*`>_]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 }
 
-export type ExploreTab = "calendar" | "weekly" | "graph" | "topics" | "pipeline" | "emails";
+export type ExploreTab = "summary" | "calendar" | "weekly" | "graph" | "topics" | "pipeline" | "emails" | "linkedin";
 
 const PALETTE = [
   "#D97757", "#7C6FF0", "#3BA776", "#E0903C",
@@ -149,12 +170,14 @@ export function Explore({
     <main className="explore">
       <header className="explore-head">
         <nav className="explore-tabs">
+          <TabBtn on={tab === "summary"} onClick={() => onTabChange("summary")} icon={<User size={15} />} label="Summary" />
           <TabBtn on={tab === "calendar"} onClick={() => onTabChange("calendar")} icon={<CalIcon size={15} />} label="Calendar" />
           <TabBtn on={tab === "weekly"} onClick={() => onTabChange("weekly")} icon={<CalendarRange size={15} />} label="This week" />
           <TabBtn on={tab === "graph"} onClick={() => onTabChange("graph")} icon={<Network size={15} />} label="Knowledge graph" />
           <TabBtn on={tab === "topics"} onClick={() => onTabChange("topics")} icon={<Flame size={15} />} label="Topics" />
           <TabBtn on={tab === "pipeline"} onClick={() => onTabChange("pipeline")} icon={<Workflow size={15} />} label="Pipeline" />
           <TabBtn on={tab === "emails"} onClick={() => onTabChange("emails")} icon={<Mail size={15} />} label="Emails" />
+          <TabBtn on={tab === "linkedin"} onClick={() => onTabChange("linkedin")} icon={<Linkedin size={15} />} label="LinkedIn" />
         </nav>
         <div className="explore-head-actions">
           <button className="btn-secondary" onClick={() => setImporting(true)}>
@@ -178,6 +201,10 @@ export function Explore({
           />
         ) : tab === "emails" ? (
           <EmailsView onOpen={onOpenChat} />
+        ) : tab === "summary" ? (
+          <SummaryView chats={conversations} onOpen={onOpenChat} onTabChange={onTabChange} />
+        ) : tab === "linkedin" ? (
+          <LinkedInView />
         ) : conversations.length === 0 ? (
           <div className="explore-empty">
             <div className="boot-mark">◆</div>
@@ -221,6 +248,7 @@ function EmailsView({ onOpen }: { onOpen: (id: string) => void }) {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [tasked, setTasked] = useState<Set<string>>(new Set());
+  const [composer, setComposer] = useState<null | { source?: EmailSource }>(null);
 
   type EV = { id: string; ts: number; from: string; subject: string; snippet: string; source: string };
   const discuss = async (e: EV) => {
@@ -255,7 +283,17 @@ function EmailsView({ onOpen }: { onOpen: (id: string) => void }) {
           <input placeholder="Search email…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <span className="ev-count">{filtered.length} / {emails.length} emails</span>
+        <button className="ev-compose-btn" onClick={() => setComposer({})} title="Quick compose / format with AI (disposable)">
+          <Wand2 size={14} /> Compose assistant
+        </button>
       </div>
+      {composer && activeProfile && (
+        <EmailComposer
+          profile={activeProfile}
+          source={composer.source}
+          onClose={() => setComposer(null)}
+        />
+      )}
       <div className="ev-body">
         {digest && (
           <div className="pf-digest"><b>📥 Inbox digest</b><p>{digest}</p></div>
@@ -293,6 +331,9 @@ function EmailsView({ onOpen }: { onOpen: (id: string) => void }) {
                 {e.from && <div className="pf-email-from">{e.from}</div>}
                 {e.snippet && <div className="pf-email-snip">{e.snippet}</div>}
                 <div className="ev-actions">
+                  <button onClick={() => setComposer({ source: { from: e.from, subject: e.subject, snippet: e.snippet, ts: e.ts } })} title="Draft a reply with AI (disposable)">
+                    <Wand2 size={13} /> Reply
+                  </button>
                   <button onClick={() => discuss(e)} title="Open a conversation about this email">
                     <MessageSquarePlus size={13} /> Discuss
                   </button>
@@ -305,6 +346,947 @@ function EmailsView({ onOpen }: { onOpen: (id: string) => void }) {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---- Email composer assistant (disposable chat) ---------------------------
+
+type EmailSource = { from: string; subject: string; snippet: string; ts: number };
+type ECTurn = { role: "user" | "assistant"; content: string; display: string };
+
+const COMPOSER_TONES = [
+  { id: "professional", name: "Professional" },
+  { id: "friendly", name: "Friendly" },
+  { id: "concise", name: "Concise" },
+  { id: "warm", name: "Warm" },
+  { id: "formal", name: "Formal" },
+];
+
+function EmailComposer({ profile, source, onClose }: { profile: Profile; source?: EmailSource; onClose: () => void }) {
+  const [tone, setTone] = useState("professional");
+  const [input, setInput] = useState("");
+  const [turns, setTurns] = useState<ECTurn[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const scroller = useRef<HTMLDivElement>(null);
+  const model: ModelId = profile.defaultModel?.startsWith("claude") ? profile.defaultModel : "claude-opus-4-8";
+
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
+  }, [turns]);
+
+  const firstInstruction = (text: string) => {
+    const toneName = COMPOSER_TONES.find((t) => t.id === tone)?.name || "Professional";
+    if (source) {
+      return (
+        `Help me reply to the email below. Tone: ${toneName}. ` +
+        `Respond with ONLY the email body — no subject line, no "Subject:", no preamble or commentary.\n\n` +
+        `--- Email I'm replying to ---\nFrom: ${source.from}\nSubject: ${source.subject}\n\n${source.snippet}\n--- end of email ---\n\n` +
+        `What I want to convey: ${text || "(write an appropriate, complete reply)"}`
+      );
+    }
+    return (
+      `Help me write and format this email. Tone: ${toneName}. ` +
+      `Respond with ONLY the email body — no commentary.\n\n${text}`
+    );
+  };
+
+  const send = async (rawText: string) => {
+    const text = rawText.trim();
+    const isFollowup = turns.length > 0;
+    if ((!text && isFollowup) || streaming) return;
+    const userContent = isFollowup ? text : firstInstruction(text);
+    const userDisplay = text || (source ? "Draft a reply" : "Format / write this");
+    const base = [...turns, { role: "user" as const, content: userContent, display: userDisplay }];
+    setTurns([...base, { role: "assistant", content: "", display: "" }]);
+    setInput("");
+    setStreaming(true);
+    const messages: Message[] = base.map((t, i) => ({ id: `ec-${i}`, role: t.role, content: t.content, ts: Date.now() }));
+    try {
+      let acc = "";
+      for await (const ev of streamChat({ profile, model, messages, contextChips: [] })) {
+        if (ev.type === "text") {
+          acc += ev.v;
+          setTurns((ts) => { const c = [...ts]; c[c.length - 1] = { role: "assistant", content: acc, display: acc }; return c; });
+        }
+      }
+    } catch {
+      setTurns((ts) => { const c = [...ts]; c[c.length - 1] = { role: "assistant", content: "⚠️ Couldn't reach the assistant.", display: "⚠️ Couldn't reach the assistant." }; return c; });
+    } finally {
+      setStreaming(false);
+    }
+  };
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); }
+  };
+
+  return (
+    <div className="ec-overlay" onClick={onClose}>
+      <div className="ec-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ec-head">
+          <div className="ec-title">
+            <Wand2 size={15} />
+            {source ? <span>Reply to: <b>{source.subject || "(no subject)"}</b></span> : <span>Compose / format email</span>}
+          </div>
+          <span className="ec-disposable">disposable · not saved</span>
+          <button className="ec-close" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {source && (
+          <div className="ec-source">
+            <div className="ec-source-meta">From {source.from}{source.ts ? ` · ${new Date(source.ts).toLocaleDateString()}` : ""}</div>
+            <div className="ec-source-snip">{source.snippet}</div>
+          </div>
+        )}
+
+        <div className="ec-transcript" ref={scroller}>
+          {turns.length === 0 && (
+            <div className="ec-hint">
+              {source
+                ? "Add a line on what you want to say (or leave blank), pick a tone, and I'll draft the reply. Then refine it conversationally."
+                : "Paste rough notes or text to clean up, pick a tone, and I'll write/format the email. Then refine it."}
+            </div>
+          )}
+          {turns.map((t, i) =>
+            t.role === "user" ? (
+              <div key={i} className="ec-user">{t.display}</div>
+            ) : (
+              <div key={i} className="ec-assistant">
+                {t.content ? (
+                  <>
+                    <div className="ec-draft-text" dangerouslySetInnerHTML={{ __html: md(t.content) }} />
+                    {!(streaming && i === turns.length - 1) && (
+                      <button className="ec-copy" onClick={() => copyText(t.content)}><Copy size={12} /> Copy</button>
+                    )}
+                  </>
+                ) : (
+                  <span className="ec-typing"><Loader size={14} className="spin" /> drafting…</span>
+                )}
+              </div>
+            ),
+          )}
+        </div>
+
+        <div className="ec-composer">
+          {turns.length === 0 && (
+            <select value={tone} onChange={(e) => setTone(e.target.value)} title="Tone">
+              {COMPOSER_TONES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          )}
+          <textarea
+            value={input}
+            placeholder={turns.length === 0 ? (source ? "What do you want to say? (optional)" : "Paste or describe the email…") : "Refine — e.g. “shorter”, “add a thank you”, “less formal”"}
+            rows={1}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKey}
+          />
+          <button className="ec-send" disabled={streaming || (turns.length > 0 && !input.trim())} onClick={() => send(input)}>
+            {streaming ? <Loader size={15} className="spin" /> : <Send size={15} />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Summary: a person's profile at a glance -------------------------------
+
+type SummarySection = "bio" | "family" | "interests" | "timeline" | "events" | "conversations";
+
+// Pull bullet lines under any heading whose title matches one of `names`.
+function extractMdSection(markdown: string, names: string[]): string[] {
+  if (!markdown) return [];
+  const lines = markdown.split(/\r?\n/);
+  const out: string[] = [];
+  let capturing = false;
+  for (const raw of lines) {
+    const head = /^#{1,6}\s+(.*)$/.exec(raw);
+    if (head) {
+      const title = head[1].toLowerCase();
+      capturing = names.some((n) => title.includes(n));
+      continue;
+    }
+    if (!capturing) continue;
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(raw);
+    if (bullet) {
+      const t = bullet[1].replace(/\*\*/g, "").replace(/`/g, "").trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+
+type TimelineItem = {
+  ts: number;
+  kind: "chat" | "memory" | "event" | "task";
+  title: string;
+  sub?: string;
+  convId?: string;
+  nav?: ExploreTab;
+};
+
+// Parse a family-relations markdown file into a center person + related members.
+type FamilyMember = { name: string; relation: string; detail?: string };
+const REL_MAP: [RegExp, string][] = [
+  [/partner|spouse|wife|husband/i, "partner"],
+  [/child|children|son|daughter|kid/i, "child"],
+  [/parent|mother|father|mom|dad/i, "parent"],
+  [/sibling|brother|sister/i, "sibling"],
+];
+function normalizeRelation(label: string): string {
+  for (const [re, rel] of REL_MAP) if (re.test(label)) return rel;
+  return "relative";
+}
+function splitNames(s: string): { name: string; detail?: string }[] {
+  return s
+    .split(/,|\band\b|&|;/i)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => {
+      const m = /^(.*?)\s*[—\-(]\s*(.*?)\)?$/.exec(x);
+      if (m && m[2]) return { name: m[1].trim(), detail: m[2].replace(/[)]/g, "").trim() };
+      return { name: x };
+    });
+}
+function parseFamily(markdown: string, centerName: string): { center: string; members: FamilyMember[] } {
+  const lines = (markdown || "").split(/\r?\n/);
+  const members: FamilyMember[] = [];
+  let current = "";
+  let inImmediate = false;
+  for (const raw of lines) {
+    const head = /^#{1,6}\s+(.*)$/.exec(raw);
+    if (head) { inImmediate = /immediate|family/i.test(head[1]); continue; }
+    if (!inImmediate) continue;
+    const labeled = /^\s*[-*]\s*\*\*(.+?):?\*\*\s*(.*)$/.exec(raw);
+    if (labeled) {
+      current = normalizeRelation(labeled[1]);
+      const val = labeled[2].trim();
+      if (val) for (const n of splitNames(val)) members.push({ ...n, relation: current });
+      continue;
+    }
+    const nested = /^\s+[-*]\s+(.*)$/.exec(raw); // indented child bullet under a label
+    if (nested && current) {
+      for (const n of splitNames(nested[1])) members.push({ ...n, relation: current });
+    }
+  }
+  // de-dupe by name
+  const seen = new Set<string>();
+  const uniq = members.filter((m) => m.name && !seen.has(m.name.toLowerCase()) && seen.add(m.name.toLowerCase()));
+  return { center: centerName, members: uniq };
+}
+
+const REL_COLOR: Record<string, string> = {
+  partner: "#C2548A", child: "#4A9DD8", parent: "#3BA776", sibling: "#E0903C", relative: "#7C6FF0",
+};
+
+function FamilyGraph({ data, accent }: { data: { center: string; members: FamilyMember[] }; accent: string }) {
+  const { center, members } = data;
+  const W = 460, H = 340, cx = W / 2, cy = H / 2;
+  const n = members.length;
+  const R = n <= 4 ? 120 : n <= 8 ? 135 : 145;
+  const nodes = members.map((m, i) => {
+    const ang = (-Math.PI / 2) + (i * 2 * Math.PI) / Math.max(1, n);
+    return { ...m, x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) };
+  });
+  if (n === 0) return <p className="lookup-muted">No immediate family parsed. Add members under “## Immediate family”.</p>;
+  return (
+    <svg className="fam-graph" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Family network graph">
+      {nodes.map((nd, i) => (
+        <line key={`e${i}`} x1={cx} y1={cy} x2={nd.x} y2={nd.y} className="fam-edge" stroke={REL_COLOR[nd.relation] || "#888"} />
+      ))}
+      {nodes.map((nd, i) => (
+        <g key={`n${i}`} className="fam-node">
+          <circle cx={nd.x} cy={nd.y} r={26} fill={REL_COLOR[nd.relation] || "#888"} />
+          <text x={nd.x} y={nd.y - 1} className="fam-node-name">{nd.name}</text>
+          {nd.detail && <text x={nd.x} y={nd.y + 11} className="fam-node-detail">{nd.detail}</text>}
+          <text x={nd.x} y={nd.y + 42} className="fam-node-rel">{nd.relation}</text>
+        </g>
+      ))}
+      <circle cx={cx} cy={cy} r={34} fill={accent} className="fam-center-c" />
+      <text x={cx} y={cy + 1} className="fam-center-name">{center}</text>
+    </svg>
+  );
+}
+
+// Render timeline items onto a month calendar grid.
+function TimelineCalendar({
+  items,
+  onOpen,
+  onTabChange,
+}: {
+  items: TimelineItem[];
+  onOpen: (id: string) => void;
+  onTabChange: (t: ExploreTab) => void;
+}) {
+  const [off, setOff] = useState(0);
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth() + off);
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const startW = (new Date(year, month, 1).getDay() + 6) % 7;
+  const days = new Date(year, month + 1, 0).getDate();
+  const today = sod(Date.now());
+  const byDay = useMemo(() => {
+    const m = new Map<number, TimelineItem[]>();
+    for (const it of items) {
+      const k = sod(it.ts);
+      (m.get(k) ?? m.set(k, []).get(k)!).push(it);
+    }
+    return m;
+  }, [items]);
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < startW; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  const go = (it: TimelineItem) => (it.convId ? onOpen(it.convId) : it.nav ? onTabChange(it.nav) : undefined);
+  return (
+    <div className="cal sm-tl-cal">
+      <div className="view-nav">
+        <button className="icon-btn" onClick={() => setOff((o) => o - 1)}><ChevronLeft size={18} /></button>
+        <h3>{base.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h3>
+        <button className="icon-btn" onClick={() => setOff((o) => o + 1)}><ChevronRight size={18} /></button>
+      </div>
+      <div className="cal-grid cal-dow">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="cal-dow-cell">{d}</div>)}
+      </div>
+      <div className="cal-grid cal-body">
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} className="cal-cell empty" />;
+          const k = new Date(year, month, d).setHours(0, 0, 0, 0);
+          const list = byDay.get(k) || [];
+          return (
+            <div key={i} className={`cal-cell ${k === today ? "today" : ""}`}>
+              <div className="cal-cell-head"><span className="cal-day">{d}</span></div>
+              <div className="cal-chips">
+                {list.slice(0, 4).map((it, j) => (
+                  <button
+                    key={j}
+                    className={`cal-chip ${it.convId || it.nav ? "" : "static"}`}
+                    style={{ borderLeftColor: { chat: "#4A9DD8", memory: "#7C6FF0", event: "#3BA776", task: "#E0903C" }[it.kind] }}
+                    title={`${it.title}${it.sub ? ` — ${it.sub}` : ""}`}
+                    onClick={() => go(it)}
+                  >
+                    {it.title}
+                  </button>
+                ))}
+                {list.length > 4 && <span className="cal-more">+{list.length - 4} more</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SummaryView({
+  chats,
+  onOpen,
+  onTabChange,
+}: {
+  chats: Conversation[];
+  onOpen: (id: string) => void;
+  onTabChange: (t: ExploreTab) => void;
+}) {
+  const { activeProfile, reminders, memory, memoryFiles } = useStore();
+  const [section, setSection] = useState<SummarySection | null>(null);
+  const [details, setDetails] = useState<ProfileDetails | null>(null);
+  const [family, setFamily] = useState<string>("");
+  const [familyView, setFamilyView] = useState<"graph" | "text">("graph");
+  const [tlView, setTlView] = useState<"calendar" | "list">("calendar");
+
+  useEffect(() => {
+    if (!activeProfile) return;
+    setDetails(null);
+    setFamily("");
+    api.getDetails(activeProfile.id).then(setDetails).catch(() => {});
+    api.getFamily(activeProfile.id).then((r) => setFamily(r.family)).catch(() => {});
+  }, [activeProfile?.id]);
+
+  // --- Derived data ---------------------------------------------------------
+  const bio = (details?.bio || activeProfile?.persona || "").trim();
+
+  // Interests: durable interests/themes from LTM + most-used conversation concepts.
+  const interests = useMemo(() => {
+    const fromLtm = extractMdSection(memoryFiles.ltm, ["interest", "theme", "passion"]);
+    const freq = new Map<string, number>();
+    for (const c of chats) for (const t of c.concepts || []) {
+      const k = t.trim();
+      if (k) freq.set(k, (freq.get(k) || 0) + 1);
+    }
+    const fromTopics = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const t of [...fromLtm, ...fromTopics]) {
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    return merged.slice(0, 24);
+  }, [memoryFiles.ltm, chats]);
+
+  // Timeline: conversations, memorized memories, and dated reminders/events.
+  const timeline = useMemo(() => {
+    const items: TimelineItem[] = [];
+    for (const c of chats)
+      items.push({ ts: c.createdAt, kind: "chat", title: c.title, sub: `${c.messages.length} messages`, convId: c.id });
+    for (const m of memory)
+      items.push({ ts: m.createdAt, kind: "memory", title: m.subject || "Memory", sub: cleanSnippet(m.body, 80), convId: m.conversationId });
+    for (const r of reminders)
+      items.push({
+        ts: r.dueAt,
+        kind: r.source === "gcal" ? "event" : "task",
+        title: r.text,
+        sub: r.source === "gcal" ? "calendar event" : r.source === "gmail" ? "from email" : "reminder",
+        nav: r.source === "gcal" ? "calendar" : undefined,
+      });
+    return items.sort((a, b) => b.ts - a.ts);
+  }, [chats, memory, reminders]);
+
+  // Recent important events: upcoming + just-passed calendar/email items and pinned chats.
+  const events = useMemo(() => {
+    const now = Date.now();
+    return reminders
+      .filter((r) => !r.done)
+      .map((r) => ({ r, dist: Math.abs(r.dueAt - now), upcoming: r.dueAt >= now - DAY_MS }))
+      .filter((x) => x.upcoming || x.dist < 14 * DAY_MS)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 12)
+      .map((x) => x.r);
+  }, [reminders]);
+
+  // Important conversations: pinned first, then memorized/summarized, then most active.
+  const importantChats = useMemo(() => {
+    const memById = new Set(memory.map((m) => m.conversationId).filter(Boolean));
+    const score = (c: Conversation) =>
+      (c.pinned ? 1000 : 0) + (memById.has(c.id) ? 500 : 0) + (c.summary ? 200 : 0) + c.messages.length;
+    return [...chats].sort((a, b) => score(b) - score(a)).slice(0, 12);
+  }, [chats, memory]);
+
+  if (!activeProfile) return <div className="lookup-muted">No profile selected.</div>;
+
+  const fmtDate = (ts: number) =>
+    new Date(ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const monthKey = (ts: number) =>
+    new Date(ts).toLocaleDateString(undefined, { year: "numeric", month: "long" });
+
+  // --- Section detail views -------------------------------------------------
+  if (section) {
+    const titles: Record<SummarySection, string> = {
+      bio: "Bio", family: "Family", interests: "Interests",
+      timeline: "Timeline", events: "Recent important events", conversations: "Important conversations",
+    };
+    return (
+      <div className="summary-view">
+        <div className="sm-detail-head">
+          <button className="sm-back" onClick={() => setSection(null)}>
+            <ArrowLeft size={15} /> Summary
+          </button>
+          <h2>{titles[section]}</h2>
+        </div>
+
+        {section === "bio" && (
+          <div className="sm-detail-body">
+            {bio ? (
+              <div className="sm-prose" dangerouslySetInnerHTML={{ __html: md(bio) }} />
+            ) : (
+              <p className="lookup-muted">No bio yet. Add one in ⚙ Profile settings → Personal details.</p>
+            )}
+            {memoryFiles.ltm && (
+              <>
+                <div className="pf-sec-h">Long-term memory</div>
+                <div className="sm-prose" dangerouslySetInnerHTML={{ __html: md(memoryFiles.ltm) }} />
+              </>
+            )}
+          </div>
+        )}
+
+        {section === "family" && (
+          <div className="sm-detail-body">
+            <div className="sm-toggle">
+              <button className={familyView === "graph" ? "active" : ""} onClick={() => setFamilyView("graph")}><Network size={13} /> Graph</button>
+              <button className={familyView === "text" ? "active" : ""} onClick={() => setFamilyView("text")}><FileText size={13} /> Text</button>
+            </div>
+            {familyView === "graph" ? (
+              <>
+                <FamilyGraph data={parseFamily(family, details?.name || activeProfile.name)} accent={activeProfile.color} />
+                <div className="fam-legend">
+                  {Object.entries(REL_COLOR).map(([rel, col]) => (
+                    <span key={rel}><i style={{ background: col }} /> {rel}</span>
+                  ))}
+                </div>
+              </>
+            ) : family.trim() ? (
+              <div className="sm-prose" dangerouslySetInnerHTML={{ __html: md(family) }} />
+            ) : (
+              <p className="lookup-muted">No family details yet — edit personal-claude/bio/&lt;name&gt;_family.md.</p>
+            )}
+          </div>
+        )}
+
+        {section === "interests" && (
+          <div className="sm-detail-body">
+            {interests.length ? (
+              <div className="sm-chips">
+                {interests.map((t) => (
+                  <button key={t} className="sm-chip" onClick={() => onTabChange("topics")} title="Explore in Topics">
+                    {t}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="lookup-muted">No interests inferred yet — they build up from your topics and long-term memory.</p>
+            )}
+          </div>
+        )}
+
+        {section === "timeline" && (
+          <div className="sm-detail-body">
+            <div className="sm-toggle">
+              <button className={tlView === "calendar" ? "active" : ""} onClick={() => setTlView("calendar")}><CalIcon size={13} /> Calendar</button>
+              <button className={tlView === "list" ? "active" : ""} onClick={() => setTlView("list")}><History size={13} /> List</button>
+            </div>
+            {timeline.length === 0 ? (
+              <p className="lookup-muted">Nothing on the timeline yet.</p>
+            ) : tlView === "calendar" ? (
+              <TimelineCalendar items={timeline} onOpen={onOpen} onTabChange={onTabChange} />
+            ) : (
+              <div className="sm-timeline">
+                {timeline.map((it, i) => {
+              const showMonth = i === 0 || monthKey(it.ts) !== monthKey(timeline[i - 1].ts);
+              return (
+                <Fragment key={i}>
+                  {showMonth && <div className="sm-tl-month">{monthKey(it.ts)}</div>}
+                  <button
+                    className={`sm-tl-item ${it.convId || it.nav ? "clickable" : ""}`}
+                    onClick={() => (it.convId ? onOpen(it.convId) : it.nav ? onTabChange(it.nav) : undefined)}
+                  >
+                    <span className={`sm-tl-dot ${it.kind}`} />
+                    <span className="sm-tl-main">
+                      <span className="sm-tl-title">{it.title}</span>
+                      {it.sub && <span className="sm-tl-sub">{it.sub}</span>}
+                    </span>
+                    <span className="sm-tl-date">{fmtDate(it.ts)}</span>
+                  </button>
+                </Fragment>
+              );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {section === "events" && (
+          <div className="sm-detail-body">
+            {events.length === 0 ? (
+              <p className="lookup-muted">No upcoming events or due tasks.</p>
+            ) : (
+              <ul className="pf-rem-list sm-event-list">
+                {events.map((r) => (
+                  <li key={r.id} onClick={() => onTabChange(r.source === "gcal" ? "calendar" : "weekly")}>
+                    <span className="sm-ev-icon">{r.source === "gcal" ? "📅" : r.source === "gmail" ? "✉️" : "🔔"}</span>
+                    <span className="pf-rem-text">{r.text}</span>
+                    <span className="pf-rem-due">{fmtDate(r.dueAt)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {section === "conversations" && (
+          <div className="sm-detail-body">
+            {importantChats.length === 0 ? (
+              <p className="lookup-muted">No conversations yet.</p>
+            ) : (
+              <ul className="sm-conv-list">
+                {importantChats.map((c) => (
+                  <li key={c.id} onClick={() => onOpen(c.id)}>
+                    <div className="sm-conv-top">
+                      {c.pinned && <Pin size={12} />}
+                      <span className="sm-conv-title">{c.title}</span>
+                      <span className="pf-rem-due">{relTime(c.updatedAt)}</span>
+                    </div>
+                    {c.summary && <div className="sm-conv-sub">{cleanSnippet(c.summary, 120)}</div>}
+                    {c.concepts?.length > 0 && (
+                      <div className="sm-conv-tags">
+                        {c.concepts.slice(0, 5).map((t) => <span key={t} className="sm-tag">{t}</span>)}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- Overview -------------------------------------------------------------
+  const cards: { key: SummarySection; icon: React.ReactNode; title: string; count?: number; preview: React.ReactNode }[] = [
+    { key: "bio", icon: <User size={16} />, title: "Bio", preview: bio ? cleanSnippet(bio, 140) : "Add a short bio in profile settings." },
+    { key: "family", icon: <Users size={16} />, title: "Family", preview: family.trim() ? cleanSnippet(family.replace(/^#.*$/m, ""), 140) : "No family details yet." },
+    { key: "interests", icon: <Sparkles size={16} />, title: "Interests", count: interests.length, preview: interests.length ? interests.slice(0, 6).join(" · ") : "Builds from topics & memory." },
+    { key: "timeline", icon: <History size={16} />, title: "Timeline", count: timeline.length, preview: timeline.length ? `From ${fmtDate(timeline[timeline.length - 1].ts)} to ${fmtDate(timeline[0].ts)}` : "Nothing yet." },
+    { key: "events", icon: <CalendarClock size={16} />, title: "Recent important events", count: events.length, preview: events.length ? events.slice(0, 3).map((r) => cleanSnippet(r.text, 32)).join(" · ") : "No upcoming events." },
+    { key: "conversations", icon: <Star size={16} />, title: "Important conversations", count: importantChats.length, preview: importantChats.length ? cleanSnippet(importantChats[0].title, 120) : "No conversations yet." },
+  ];
+
+  return (
+    <div className="summary-view">
+      <header className="sm-hero">
+        <div className="sm-avatar" style={{ background: activeProfile.color }}>
+          {activeProfile.avatar || activeProfile.name.slice(0, 1).toUpperCase()}
+        </div>
+        <div className="sm-hero-main">
+          <h1>{details?.name || activeProfile.name}</h1>
+          {(details?.role || activeProfile.tagline) && <div className="sm-tagline">{details?.role || activeProfile.tagline}</div>}
+          <div className="sm-meta">
+            {details?.location && <span><MapPin size={12} /> {details.location}</span>}
+            {details?.role && <span><Briefcase size={12} /> {details.role}</span>}
+            {details?.websites?.filter(Boolean).map((w) => (
+              <a key={w} href={w} target="_blank" rel="noreferrer"><LinkIcon size={12} /> {w.replace(/^https?:\/\//, "")}</a>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      <div className="sm-cards">
+        {cards.map((c) => (
+          <button key={c.key} className="sm-card" onClick={() => setSection(c.key)}>
+            <div className="sm-card-head">
+              <span className="sm-card-icon">{c.icon}</span>
+              <span className="sm-card-title">{c.title}</span>
+              {c.count !== undefined && <span className="sm-card-count">{c.count}</span>}
+              <ChevronRight size={15} className="sm-card-arrow" />
+            </div>
+            <div className="sm-card-preview">{c.preview}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- LinkedIn manager: inbox reply pipeline + post studio ------------------
+
+function copyText(t: string) {
+  navigator.clipboard?.writeText(t).catch(() => {});
+}
+
+function LinkedInView() {
+  const [sub, setSub] = useState<"inbox" | "studio" | "outreach">("inbox");
+  return (
+    <div className="li-view">
+      <div className="li-subtabs">
+        <button className={sub === "inbox" ? "active" : ""} onClick={() => setSub("inbox")}>
+          <Inbox size={14} /> Inbox &amp; replies
+        </button>
+        <button className={sub === "studio" ? "active" : ""} onClick={() => setSub("studio")}>
+          <Wand2 size={14} /> Post studio
+        </button>
+        <button className={sub === "outreach" ? "active" : ""} onClick={() => setSub("outreach")}>
+          <Send size={14} /> Outreach
+        </button>
+      </div>
+      <div className="li-note">
+        <Linkedin size={13} /> Drafts are prepared locally and held behind a manual approval gate — nothing is posted to LinkedIn automatically.
+      </div>
+      {sub === "inbox" ? <LiInbox /> : sub === "studio" ? <LiStudio /> : <LiOutreach />}
+    </div>
+  );
+}
+
+const TONES = [
+  { id: "professional", name: "Professional" },
+  { id: "friendly", name: "Friendly" },
+  { id: "concise", name: "Concise" },
+  { id: "enthusiastic", name: "Enthusiastic" },
+];
+
+function recClass(r?: string) {
+  return r === "approve" ? "good" : r === "review" ? "warn" : "bad";
+}
+
+function LiInbox() {
+  const { activeProfile } = useStore();
+  const [messages, setMessages] = useState<LiMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ sender: "", headline: "", text: "" });
+
+  const load = () => {
+    if (!activeProfile) return;
+    api.liMessages(activeProfile.id).then((r) => setMessages(r.messages)).catch(() => {}).finally(() => setLoading(false));
+  };
+  useEffect(() => { setLoading(true); load(); }, [activeProfile?.id]);
+
+  const pid = activeProfile?.id;
+  const process = async (id: string, tone?: string) => {
+    if (!pid) return;
+    setBusy(id);
+    try { await api.liProcess(pid, id, tone ? { tone } : undefined); load(); }
+    finally { setBusy(null); }
+  };
+  const approve = async (m: LiMessage) => {
+    if (!pid || !m.draft) return;
+    const r = await api.liApprove(pid, m.draft.id);
+    copyText(r.reply);
+    load();
+  };
+  const reject = async (m: LiMessage) => {
+    if (!pid || !m.draft) return;
+    await api.liReject(pid, m.draft.id); load();
+  };
+  const editBody = async (m: LiMessage, body: string) => {
+    setMessages((ms) => ms.map((x) => (x.id === m.id && x.draft ? { ...x, draft: { ...x.draft, body } } : x)));
+  };
+  const saveBody = async (m: LiMessage) => {
+    if (!pid || !m.draft) return;
+    await api.liEditDraft(pid, m.draft.id, { body: m.draft.body });
+  };
+  const seed = async () => { if (!pid) return; await api.liSeedDemo(pid); load(); };
+  const del = async (id: string) => { if (!pid) return; await api.liDeleteMessage(pid, id); load(); };
+  const submitAdd = async () => {
+    if (!pid || !form.text.trim()) return;
+    await api.liIngest(pid, { ...form, autoProcess: true });
+    setForm({ sender: "", headline: "", text: "" }); setAdding(false); load();
+  };
+
+  return (
+    <div className="li-inbox">
+      <div className="li-bar">
+        <span className="ev-count">{messages.length} messages</span>
+        <div className="li-bar-actions">
+          <button className="btn-secondary" onClick={() => setAdding((v) => !v)}><Plus size={13} /> Add message</button>
+          <button className="btn-secondary" onClick={seed}><Database size={13} /> Seed demo</button>
+          <button className="btn-secondary" onClick={load}><RefreshCw size={13} /> Refresh</button>
+        </div>
+      </div>
+      {adding && (
+        <div className="li-add">
+          <div className="li-add-row">
+            <input placeholder="Sender" value={form.sender} onChange={(e) => setForm({ ...form, sender: e.target.value })} />
+            <input placeholder="Headline (optional)" value={form.headline} onChange={(e) => setForm({ ...form, headline: e.target.value })} />
+          </div>
+          <textarea placeholder="Paste the inbound LinkedIn message…" value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} />
+          <div className="li-add-actions">
+            <button className="new-chat-btn" disabled={!form.text.trim()} onClick={submitAdd}>Add &amp; draft reply</button>
+            <button className="btn-secondary" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {loading ? (
+        <div className="lookup-muted">Loading…</div>
+      ) : messages.length === 0 ? (
+        <div className="lookup-muted">No messages yet. “Seed demo” to try the pipeline, or POST scraped messages to <code>/api/profiles/{pid}/linkedin/messages</code>.</div>
+      ) : (
+        <ul className="li-msg-list">
+          {messages.map((m) => (
+            <li key={m.id} className="li-msg">
+              <div className="li-msg-head">
+                <div className="li-msg-who">
+                  <span className="li-msg-sender">{m.sender || "Unknown"}</span>
+                  {m.headline && <span className="li-msg-headline">{m.headline}</span>}
+                </div>
+                <button className="li-icon" title="Delete" onClick={() => del(m.id)}><Trash2 size={13} /></button>
+              </div>
+              <div className="li-msg-text">{m.text}</div>
+              {m.intent && (
+                <div className="li-chips">
+                  <span className={`li-chip intent-${m.intent}`}>{m.intent}</span>
+                  <span className="li-chip">priority: {m.priority}</span>
+                  <span className="li-chip">urgency: {m.urgency}</span>
+                  <span className="li-chip">{m.sentiment}</span>
+                </div>
+              )}
+              {!m.draft ? (
+                <button className="li-run" disabled={busy === m.id} onClick={() => process(m.id)}>
+                  {busy === m.id ? <><Loader size={13} className="spin" /> Running pipeline…</> : <><Wand2 size={13} /> Draft a reply</>}
+                </button>
+              ) : (
+                <div className={`li-draft ${m.draft.status}`}>
+                  <div className="li-draft-head">
+                    <span className={`li-rec ${recClass(m.draft.recommendation)}`}>{m.draft.recommendation}</span>
+                    <span className="li-scores">
+                      Q {m.draft.qualityScore} · rel {m.draft.relevance} · compl {m.draft.completeness} · tone {m.draft.toneOk}
+                    </span>
+                    <span className={`li-status s-${m.draft.status}`}>{m.draft.status}</span>
+                  </div>
+                  <textarea
+                    className="li-draft-body"
+                    value={m.draft.body}
+                    onChange={(e) => editBody(m, e.target.value)}
+                    onBlur={() => saveBody(m)}
+                  />
+                  <div className="li-draft-actions">
+                    <select
+                      value={m.draft.tone || "professional"}
+                      onChange={(e) => process(m.id, e.target.value)}
+                      title="Re-draft with tone"
+                    >
+                      {TONES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                    <button onClick={() => process(m.id, m.draft?.tone || undefined)} disabled={busy === m.id} title="Re-run pipeline">
+                      <RefreshCw size={13} /> Redraft
+                    </button>
+                    <button onClick={() => copyText(m.draft!.body)}><Copy size={13} /> Copy</button>
+                    <button className="li-approve" onClick={() => approve(m)} disabled={m.draft.status === "approved"}>
+                      <ThumbsUp size={13} /> {m.draft.status === "approved" ? "Approved · copied" : "Approve"}
+                    </button>
+                    <button className="li-reject" onClick={() => reject(m)}><ThumbsDown size={13} /> Reject</button>
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function LiStudio() {
+  const { activeProfile } = useStore();
+  const [templates, setTemplates] = useState<LiTemplate[]>([]);
+  const [posts, setPosts] = useState<LiPost[]>([]);
+  const [tpl, setTpl] = useState("thought-leadership");
+  const [topic, setTopic] = useState("");
+  const [draft, setDraft] = useState<{ title: string; body: string; hashtags: string[] } | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [when, setWhen] = useState("");
+
+  const pid = activeProfile?.id;
+  const load = () => {
+    if (!pid) return;
+    api.liTemplates(pid).then((r) => setTemplates(r.post)).catch(() => {});
+    api.liPosts(pid).then((r) => setPosts(r.posts)).catch(() => {});
+  };
+  useEffect(() => { load(); }, [pid]);
+
+  const generate = async () => {
+    if (!pid) return;
+    setDrafting(true);
+    try { setDraft(await api.liDraftPost(pid, { template: tpl, topic })); }
+    finally { setDrafting(false); }
+  };
+  const save = async (status: string) => {
+    if (!pid || !draft) return;
+    await api.liAddPost(pid, {
+      kind: "post", template: tpl, topic, title: draft.title, body: draft.body,
+      hashtags: draft.hashtags, status, scheduledAt: when ? new Date(when).getTime() : null,
+    });
+    setDraft(null); setTopic(""); setWhen(""); load();
+  };
+  const setStatus = async (p: LiPost, status: string) => { if (pid) { await api.liUpdatePost(pid, p.id, { status }); load(); } };
+  const del = async (id: string) => { if (pid) { await api.liDeletePost(pid, id); load(); } };
+
+  const STAGES = ["idea", "draft", "ready", "scheduled", "posted"];
+
+  return (
+    <div className="li-studio">
+      <div className="li-compose">
+        <div className="li-compose-row">
+          <select value={tpl} onChange={(e) => setTpl(e.target.value)}>
+            {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <input placeholder="Topic / angle (optional)" value={topic} onChange={(e) => setTopic(e.target.value)} />
+          <button className="new-chat-btn" disabled={drafting} onClick={generate}>
+            {drafting ? <><Loader size={14} className="spin" /> Drafting…</> : <><Wand2 size={14} /> Draft with AI</>}
+          </button>
+        </div>
+        {templates.find((t) => t.id === tpl) && (
+          <div className="li-tpl-hint">{templates.find((t) => t.id === tpl)!.structure}</div>
+        )}
+        {draft && (
+          <div className="li-draft-card">
+            <input className="li-draft-title" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+            <textarea className="li-post-body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
+            {draft.hashtags.length > 0 && <div className="li-hashtags">{draft.hashtags.join("  ")}</div>}
+            <div className="li-draft-actions">
+              <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} title="Schedule (optional)" />
+              <button onClick={() => copyText(`${draft.body}${draft.hashtags.length ? "\n\n" + draft.hashtags.join(" ") : ""}`)}><Copy size={13} /> Copy</button>
+              <button className="btn-secondary" onClick={() => save("draft")}>Save draft</button>
+              <button className="new-chat-btn" onClick={() => save(when ? "scheduled" : "ready")}>{when ? "Schedule" : "Mark ready"}</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="li-pipeline-cols">
+        {STAGES.map((s) => {
+          const items = posts.filter((p) => p.status === s);
+          return (
+            <div key={s} className="li-col">
+              <div className="li-col-head">{s} <span className="pf-count">{items.length}</span></div>
+              {items.map((p) => (
+                <div key={p.id} className="li-post-card">
+                  <div className="li-post-title">{p.title || p.topic || "Untitled"}</div>
+                  <div className="li-post-snip">{cleanSnippet(p.body, 90)}</div>
+                  {p.scheduledAt && <div className="li-post-when">📅 {new Date(p.scheduledAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>}
+                  <div className="li-post-actions">
+                    <button onClick={() => copyText(`${p.body}${p.hashtags.length ? "\n\n" + p.hashtags.join(" ") : ""}`)} title="Copy"><Copy size={12} /></button>
+                    <select value={p.status} onChange={(e) => setStatus(p, e.target.value)}>
+                      {STAGES.map((x) => <option key={x} value={x}>{x}</option>)}
+                    </select>
+                    <button onClick={() => del(p.id)} title="Delete"><Trash2 size={12} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LiOutreach() {
+  const { activeProfile } = useStore();
+  const [templates, setTemplates] = useState<LiTemplate[]>([]);
+  const [tpl, setTpl] = useState("connection-note");
+  const [topic, setTopic] = useState("");
+  const [out, setOut] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const pid = activeProfile?.id;
+  useEffect(() => {
+    if (!pid) return;
+    api.liTemplates(pid).then((r) => setTemplates(r.outreach)).catch(() => {});
+  }, [pid]);
+
+  const generate = async () => {
+    if (!pid) return;
+    setBusy(true);
+    try { const r = await api.liDraftPost(pid, { template: tpl, topic, kind: "outreach" }); setOut(r.body); }
+    finally { setBusy(false); }
+  };
+
+  const current = templates.find((t) => t.id === tpl);
+  return (
+    <div className="li-outreach">
+      <div className="li-compose-row">
+        <select value={tpl} onChange={(e) => setTpl(e.target.value)}>
+          {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <input placeholder="Who / context (e.g. 'met at re:Invent, works on ML infra')" value={topic} onChange={(e) => setTopic(e.target.value)} />
+        <button className="new-chat-btn" disabled={busy} onClick={generate}>
+          {busy ? <><Loader size={14} className="spin" /> Writing…</> : <><Wand2 size={14} /> Personalize</>}
+        </button>
+      </div>
+      {current && <div className="li-tpl-hint">{current.structure}</div>}
+      {out && (
+        <div className="li-draft-card">
+          <textarea className="li-post-body" value={out} onChange={(e) => setOut(e.target.value)} />
+          <div className="li-draft-actions">
+            <button onClick={() => copyText(out)}><Copy size={13} /> Copy</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

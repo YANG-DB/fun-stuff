@@ -51,6 +51,59 @@ export interface ProfileDetails {
   custom?: { label: string; value: string }[];
 }
 
+export interface LiTemplate {
+  id: string;
+  kind: string;
+  name: string;
+  structure: string;
+  custom?: boolean;
+}
+export interface LiDraft {
+  id: string;
+  messageId: string;
+  body: string;
+  template?: string | null;
+  tone?: string | null;
+  relevance?: number;
+  completeness?: number;
+  toneOk?: number;
+  qualityScore?: number;
+  recommendation?: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface LiMessage {
+  id: string;
+  ts: number;
+  sender?: string;
+  headline?: string;
+  text: string;
+  threadUrl?: string;
+  intent?: string;
+  priority?: string;
+  urgency?: string;
+  sentiment?: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  draft?: LiDraft | null;
+}
+export interface LiPost {
+  id: string;
+  kind: string;
+  template?: string | null;
+  topic?: string | null;
+  title?: string | null;
+  body: string;
+  hashtags: string[];
+  status: string;
+  scheduledAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+  postedAt?: number | null;
+}
+
 export const api = {
   // auth
   authConfig: () => req<{ authRequired: boolean }>("/auth/config"),
@@ -277,6 +330,52 @@ export const api = {
     req<{ content: string; updatedAt: number }>(`/profiles/${pid}/ltm`, {
       method: "POST",
     }),
+  // family-relations markdown (bio/<slug>_family.md) — for the summary page
+  getFamily: (pid: string) =>
+    req<{ family: string; updatedAt: number }>(`/profiles/${pid}/family`),
+
+  // ---- LinkedIn manager --------------------------------------------------
+  liTemplates: (pid: string) =>
+    req<{
+      post: LiTemplate[];
+      outreach: LiTemplate[];
+      tones: { id: string; name: string; note: string }[];
+      custom: LiTemplate[];
+    }>(`/profiles/${pid}/linkedin/templates`),
+  liAddTemplate: (pid: string, t: { kind: string; name: string; structure: string }) =>
+    req<LiTemplate>(`/profiles/${pid}/linkedin/templates`, { method: "POST", body: JSON.stringify(t) }),
+  liDeleteTemplate: (pid: string, id: string) =>
+    req(`/profiles/${pid}/linkedin/templates/${id}`, { method: "DELETE" }),
+
+  liMessages: (pid: string) =>
+    req<{ messages: LiMessage[] }>(`/profiles/${pid}/linkedin/messages`),
+  liIngest: (pid: string, m: { sender?: string; headline?: string; text: string; threadUrl?: string; autoProcess?: boolean }) =>
+    req<{ ok: boolean; message: LiMessage }>(`/profiles/${pid}/linkedin/messages`, { method: "POST", body: JSON.stringify(m) }),
+  liProcess: (pid: string, id: string, opts?: { tone?: string }) =>
+    req<{ message: LiMessage }>(`/profiles/${pid}/linkedin/messages/${id}/process`, { method: "POST", body: JSON.stringify(opts || {}) }),
+  liDeleteMessage: (pid: string, id: string) =>
+    req(`/profiles/${pid}/linkedin/messages/${id}`, { method: "DELETE" }),
+  liSeedDemo: (pid: string) =>
+    req<{ ok: boolean; added: number }>(`/profiles/${pid}/linkedin/seed-demo`, { method: "POST" }),
+
+  liEditDraft: (pid: string, id: string, patch: { body?: string; status?: string }) =>
+    req<LiDraft>(`/profiles/${pid}/linkedin/drafts/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  liRedraft: (pid: string, id: string, tone?: string) =>
+    req<LiDraft>(`/profiles/${pid}/linkedin/drafts/${id}/redraft`, { method: "POST", body: JSON.stringify({ tone }) }),
+  liApprove: (pid: string, id: string) =>
+    req<{ ok: boolean; reply: string; dispatched: boolean }>(`/profiles/${pid}/linkedin/drafts/${id}/approve`, { method: "POST" }),
+  liReject: (pid: string, id: string) =>
+    req<{ ok: boolean }>(`/profiles/${pid}/linkedin/drafts/${id}/reject`, { method: "POST" }),
+
+  liPosts: (pid: string) => req<{ posts: LiPost[] }>(`/profiles/${pid}/linkedin/posts`),
+  liAddPost: (pid: string, p: Partial<LiPost>) =>
+    req<LiPost>(`/profiles/${pid}/linkedin/posts`, { method: "POST", body: JSON.stringify(p) }),
+  liUpdatePost: (pid: string, id: string, patch: Partial<LiPost>) =>
+    req<LiPost>(`/profiles/${pid}/linkedin/posts/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  liDeletePost: (pid: string, id: string) =>
+    req(`/profiles/${pid}/linkedin/posts/${id}`, { method: "DELETE" }),
+  liDraftPost: (pid: string, body: { template?: string; topic?: string; kind?: string }) =>
+    req<{ title: string; body: string; hashtags: string[] }>(`/profiles/${pid}/linkedin/posts/draft`, { method: "POST", body: JSON.stringify(body) }),
 
   // notes
   listNotes: (pid: string) => req<Note[]>(`/profiles/${pid}/notes`),

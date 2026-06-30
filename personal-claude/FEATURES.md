@@ -33,6 +33,9 @@ memory, and rich exploration views.
 19. [Slash commands](#19-slash-commands)
 20. [Tool / API reference](#20-tool--api-reference)
 21. [Privacy, secrets & git hygiene](#21-privacy-secrets--git-hygiene)
+22. [Person summary page](#22-person-summary-page)
+23. [LinkedIn manager](#23-linkedin-manager)
+24. [Email composer assistant](#24-email-composer-assistant)
 
 ---
 
@@ -475,6 +478,120 @@ No secrets are hardcoded in source. Google **refresh tokens** (for Gmail/Calenda
 are stored **AES-256-GCM-encrypted** in the per-profile DB (under
 `~/.personal-claude/`), and Google data access is **read-only**. Rotate any key
 that has been shared outside the local `.env`.
+
+---
+
+## 22. Person summary page
+
+The **Summary** tab (the default Explore landing) is a per-profile "person at a
+glance" hub — [`SummaryView`](frontend/src/components/Explore.tsx). A hero header
+(avatar, name, role, location, links from [§6](#6-personal-details--ltm) details)
+sits above six **navigable cards**; each opens a focused detail view with a
+`← Summary` back button, and individual items inside drill through to the right
+place:
+
+| Card | Built from | Drills into |
+|---|---|---|
+| **Bio** | personal details `bio` + persona, and full LTM | rendered markdown |
+| **Family** | `bio/<name>_family.md` (via `GET /profiles/:pid/family`) | **family network graph** (below) or text |
+| **Interests** | LTM "Interests/Themes" bullets + most-used conversation concepts | chips → Topics tab |
+| **Timeline** | conversations + memorized memories + dated reminders/events | **month calendar** (below) or list → opens chat / Calendar |
+| **Recent important events** | open reminders within ±14 days | Calendar / This-week |
+| **Important conversations** | ranked: pinned → memorized → summarized → most active | opens the conversation |
+
+- **Family network graph** — a radial SVG with the person at the centre and each
+  relative as a coloured node by relation (partner / child / parent / sibling /
+  relative), parsed from the family markdown (`parseFamily` handles `**Label:**`
+  bullets and nested child lists, extracting name + detail e.g. age). Graph/Text toggle + legend.
+- **Timeline calendar** — `TimelineCalendar` renders timeline items onto a
+  navigable month grid (chats / memories / events / tasks colour-coded, placed by
+  date, click-through preserved). Calendar/List toggle.
+
+---
+
+## 23. LinkedIn manager
+
+A **local, multi-agent LinkedIn assistant** — an inbound-message reply pipeline
+behind a **manual approval gate**, plus an outbound content studio. Backend agents
+live in [`linkedin.js`](backend/src/linkedin.js); the UI is the **LinkedIn** tab
+([`LinkedInView`](frontend/src/components/Explore.tsx)). Adapted from the
+"LinkedIn Monitor — Local Multi-Agent Architecture" design:
+
+```mermaid
+flowchart TB
+  subgraph L1["Layer 1 — Source (external, outside this process)"]
+    CHROME["Chrome (--remote-debugging-port)<br/>logged into LinkedIn"] -->|reads| INBOX["LinkedIn inbox<br/>(chat / messages)"]
+    INBOX --> SEL["Selenium / CDP scraper"]
+  end
+  subgraph BUS["Agent Bus — Node EventEmitter"]
+    RECV["Receiver<br/>ingest endpoint → dedupe → DB"] -->|message.new| ANA["Analyzer<br/>intent · priority · urgency · sentiment"]
+    ANA -->|message.analyzed| COMP["Composer<br/>drafts reply in the profile's voice + tone"]
+    COMP -->|message.composed| VAL["Validator<br/>relevance · completeness · tone"]
+    VAL -->|message.validated| AUD["Auditor<br/>quality score + recommendation (spam → skip)"]
+    AUD -->|message.ready_for_review| DISP["Dispatcher<br/>(manual gate only)"]
+  end
+  subgraph L3["Model layer (swappable)"]
+    MODEL["runModel → Claude / Gemini<br/>(or a local OpenAI-compatible gateway)"]
+  end
+  subgraph L4["Data & Control"]
+    DB["SQLite: linkedin_messages / drafts /<br/>posts / templates / audit"]
+    UI["LinkedIn tab — review dashboard<br/>Approve / Reject / Redraft / Copy"]
+  end
+  SEL -->|POST /linkedin/messages| RECV
+  ANA & COMP & VAL --> MODEL
+  RECV & ANA & COMP & VAL & AUD --> DB
+  DB <--> UI
+  UI -. "draft.approved (manual click only)" .-> DISP
+  DISP -. "optional local webhook<br/>(your post_reply.py)" .-> INBOX
+```
+
+**How it differs from the original diagram (and why):**
+
+- **Models** — the diagram used Gemma/Ollama + an OpenClaw gateway; here the agents
+  call the app's existing `runModel` (Claude / Gemini), kept swappable so a local
+  gateway can be dropped in.
+- **No browser automation in-process** — Selenium/CDP scraping and `post_reply.py`
+  posting are ToS-restricted and fragile, so they stay **external**: the Receiver is
+  fed via `POST /api/profiles/:pid/linkedin/messages`, and an approved draft is
+  surfaced for manual paste (or an optional local **dispatcher webhook**). **No
+  LinkedIn API, no auto-posting.**
+
+**Inbox & replies** — ingested messages show analyzer tags (intent/priority/
+urgency/sentiment); "Draft a reply" runs the pipeline and produces an editable
+draft with Validator/Auditor scores + a recommendation badge (`approve` /
+`review` / `revise` / `skip`). **Approve** copies the reply (and fires the webhook
+if configured); **Reject** / **Redraft** (with a tone) re-run. "Seed demo" adds
+sample inbound messages so the pipeline is testable without Selenium.
+
+**Post studio** — six built-in post templates (thought-leadership, story,
+announcement, how-to, hiring, poll) → **Draft with AI** in the profile's voice →
+a **content calendar** with a status pipeline (idea → draft → ready → scheduled →
+posted), copy/schedule/delete.
+
+**Outreach** — connection-note / cold-intro / congrats / value-comment / follow-up
+templates that Claude personalizes from a short context line (sent manually).
+
+All data is per-profile (`linkedin_*` tables) with an append-only `linkedin_audit`
+trail of pipeline events. REST under `/api/profiles/:pid/linkedin/*`.
+
+---
+
+## 24. Email composer assistant
+
+A **disposable** AI chat for email writing, in the **Emails** tab
+([`EmailComposer`](frontend/src/components/Explore.tsx)). Two entry points:
+
+- **"Compose assistant"** (top bar) → blank *compose / format* mode — paste rough
+  notes or text to clean up.
+- **"Reply"** on any email row → *reply* mode, pre-loaded with that email
+  (from / subject / snippet) as context.
+
+A tone selector (Professional / Friendly / Concise / Warm / Formal) steers the
+first draft, which **streams** in via the existing `/api/chat` (written in the
+profile's voice). Each draft has a **Copy** button, and the chat supports
+**conversational refinement** ("shorter", "add a thank you", "less formal") using
+in-memory history. It is **disposable by design**: it passes no `conversationId`,
+so the gateway streams but **persists nothing** — closing discards it.
 
 ---
 

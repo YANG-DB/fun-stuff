@@ -16,6 +16,7 @@ import { hasAnthropicKey, runClaude } from "./anthropic.js";
 import { importClaudeExport } from "./claudeImport.js";
 import { parseEngineDir, importNormalized } from "./engineImport.js";
 import * as gws from "./gworkspace.js";
+import * as li from "./linkedin.js";
 import { buildSystem } from "./systemPrompt.js";
 import { readContext, writeContext } from "./contextStore.js";
 import { memoryDir } from "./memory.js";
@@ -818,6 +819,318 @@ app.get("/api/profiles/:pid/memory-files", withProfile, (req, res) => {
     ltm: ltm.content,
     ltmUpdated: ltm.updatedAt,
   });
+});
+
+// Family-relations markdown for a profile (from personal-claude/bio/<slug>_family.md).
+// Ensures a template exists, then returns its content for the summary page.
+app.get("/api/profiles/:pid/family", withProfile, (req, res) => {
+  try {
+    syncFamily(req.pid); // create the template if it's missing
+    const prow = systemDb.prepare("SELECT name FROM profiles WHERE id=?").get(req.pid);
+    const name = prow?.name || req.pid;
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || req.pid;
+    const file = join(BIO_DIR, `${slug}_family.md`);
+    const family = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const updatedAt = existsSync(file) ? statSync(file).mtimeMs : 0;
+    res.json({ family, updatedAt });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- LinkedIn manager: inbox pipeline + content studio ---------------------
+// Multi-agent reply pipeline (Receiver→Analyzer→Composer→Validator→Auditor) with
+// a manual approval gate before anything is posted. Browser automation lives
+// outside this process; the Receiver is fed via the ingest endpoint below.
+
+function liProfileModel(pid) {
+  return systemDb.prepare("SELECT persona, default_model FROM profiles WHERE id=?").get(pid) || {};
+}
+function liLog(db, refId, stage, event, detail) {
+  try {
+    db.prepare("INSERT INTO linkedin_audit (ts, ref_id, stage, event, detail) VALUES (?,?,?,?,?)")
+      .run(Date.now(), refId || null, stage, event, detail ? String(detail).slice(0, 300) : null);
+  } catch { /* best-effort */ }
+}
+function liMsgRow(r) {
+  return {
+    id: r.id, ts: r.ts, sender: r.sender, headline: r.headline, text: r.text, threadUrl: r.thread_url,
+    intent: r.intent, priority: r.priority, urgency: r.urgency, sentiment: r.sentiment,
+    status: r.status, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function liDraftRow(r) {
+  return r && {
+    id: r.id, messageId: r.message_id, body: r.body, template: r.template, tone: r.tone,
+    relevance: r.relevance, completeness: r.completeness, toneOk: r.tone_ok,
+    qualityScore: r.quality_score, recommendation: r.recommendation, status: r.status,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function liPostRow(r) {
+  return {
+    id: r.id, kind: r.kind, template: r.template, topic: r.topic, title: r.title, body: r.body,
+    hashtags: r.hashtags ? JSON.parse(r.hashtags) : [], status: r.status, scheduledAt: r.scheduled_at,
+    createdAt: r.created_at, updatedAt: r.updated_at, postedAt: r.posted_at,
+  };
+}
+
+// Run the full agent pipeline for one inbound message; persist analysis + a draft.
+async function liRunPipeline(db, pid, msgRow, opts = {}) {
+  const { persona, default_model } = liProfileModel(pid);
+  const model = default_model || "claude-opus-4-8";
+  const now = Date.now();
+  const analysis = await li.analyze(runModel, model, msgRow);
+  db.prepare("UPDATE linkedin_messages SET intent=?, priority=?, urgency=?, sentiment=?, status='drafted', updated_at=? WHERE id=?")
+    .run(analysis.intent, analysis.priority, analysis.urgency, analysis.sentiment, now, msgRow.id);
+  liLog(db, msgRow.id, "analyzer", "message.analyzed", `${analysis.intent}/${analysis.priority}`);
+
+  const tone = opts.tone || "professional";
+  const body = await li.compose(runModel, model, msgRow, { persona, tone, analysis });
+  liLog(db, msgRow.id, "composer", "message.composed", `${body.length} chars`);
+
+  const validation = await li.validate(runModel, model, msgRow, body);
+  liLog(db, msgRow.id, "validator", "message.validated", `rel ${validation.relevance}`);
+
+  const a = li.audit(validation, body, analysis);
+  liLog(db, msgRow.id, "auditor", "message.ready_for_review", a.recommendation);
+
+  // One live draft per message: replace any prior one.
+  db.prepare("DELETE FROM linkedin_drafts WHERE message_id=?").run(msgRow.id);
+  const id = uid("lid");
+  db.prepare(`INSERT INTO linkedin_drafts
+    (id, message_id, body, template, tone, relevance, completeness, tone_ok, quality_score, recommendation, status, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, msgRow.id, body, opts.template || null, tone, validation.relevance, validation.completeness,
+      validation.tone_ok, a.quality_score, a.recommendation, "ready", now, now);
+  const draft = db.prepare("SELECT * FROM linkedin_drafts WHERE id=?").get(id);
+  return { analysis, draft: liDraftRow(draft) };
+}
+
+// Templates — built-ins (code) + user-defined (DB).
+app.get("/api/profiles/:pid/linkedin/templates", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const custom = db.prepare("SELECT * FROM linkedin_templates ORDER BY created_at DESC").all()
+    .map((r) => ({ id: r.id, kind: r.kind, name: r.name, structure: r.structure, custom: true }));
+  res.json({ post: li.POST_TEMPLATES, outreach: li.OUTREACH_TEMPLATES, tones: li.REPLY_TONES, custom });
+});
+app.post("/api/profiles/:pid/linkedin/templates", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const { kind = "post", name, structure = "" } = req.body || {};
+  if (!name) return res.status(400).json({ error: "name required" });
+  const id = uid("lit");
+  db.prepare("INSERT INTO linkedin_templates (id, kind, name, structure, created_at) VALUES (?,?,?,?,?)")
+    .run(id, kind, name, structure, Date.now());
+  res.json({ id, kind, name, structure, custom: true });
+});
+app.delete("/api/profiles/:pid/linkedin/templates/:id", withProfile, (req, res) => {
+  getProfileDb(req.pid).prepare("DELETE FROM linkedin_templates WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Inbox messages (with their current draft joined).
+app.get("/api/profiles/:pid/linkedin/messages", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const msgs = db.prepare("SELECT * FROM linkedin_messages ORDER BY COALESCE(ts, created_at) DESC").all();
+  const drafts = db.prepare("SELECT * FROM linkedin_drafts").all();
+  const byMsg = new Map(drafts.map((d) => [d.message_id, d]));
+  res.json({ messages: msgs.map((m) => ({ ...liMsgRow(m), draft: liDraftRow(byMsg.get(m.id)) || null })) });
+});
+
+// Receiver — ingest a scraped/typed inbound message; optionally run the pipeline.
+app.post("/api/profiles/:pid/linkedin/messages", withProfile, async (req, res) => {
+  const db = getProfileDb(req.pid);
+  const b = req.body || {};
+  if (!b.text) return res.status(400).json({ error: "text required" });
+  const id = b.id ? `lim-${String(b.id).replace(/[^a-zA-Z0-9_-]/g, "")}` : uid("lim");
+  const now = Date.now();
+  // Dedup by id: skip if we already have this scraped message.
+  const exists = db.prepare("SELECT 1 FROM linkedin_messages WHERE id=?").get(id);
+  if (exists) return res.json({ ok: true, deduped: true, id });
+  db.prepare(`INSERT INTO linkedin_messages (id, ts, sender, headline, text, thread_url, status, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(id, b.ts || now, b.sender || null, b.headline || null, b.text, b.threadUrl || null, "new", now, now);
+  li.bus.emit("message.new", { id });
+  liLog(db, id, "receiver", "message.new", b.sender || "");
+  let draft = null, analysis = null;
+  if (b.autoProcess) {
+    const row = db.prepare("SELECT * FROM linkedin_messages WHERE id=?").get(id);
+    try { ({ draft, analysis } = await liRunPipeline(db, req.pid, row)); }
+    catch (e) { return res.status(502).json({ error: `pipeline failed: ${e.message}`, id }); }
+  }
+  const m = db.prepare("SELECT * FROM linkedin_messages WHERE id=?").get(id);
+  res.json({ ok: true, message: { ...liMsgRow(m), draft }, analysis });
+});
+
+// Run / re-run the pipeline for one message.
+app.post("/api/profiles/:pid/linkedin/messages/:id/process", withProfile, async (req, res) => {
+  const db = getProfileDb(req.pid);
+  const row = db.prepare("SELECT * FROM linkedin_messages WHERE id=?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "no such message" });
+  try {
+    const { draft, analysis } = await liRunPipeline(db, req.pid, row, req.body || {});
+    const m = db.prepare("SELECT * FROM linkedin_messages WHERE id=?").get(req.params.id);
+    res.json({ message: { ...liMsgRow(m), draft }, analysis });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.delete("/api/profiles/:pid/linkedin/messages/:id", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  db.prepare("DELETE FROM linkedin_drafts WHERE message_id=?").run(req.params.id);
+  db.prepare("DELETE FROM linkedin_messages WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Edit a draft body by hand.
+app.patch("/api/profiles/:pid/linkedin/drafts/:id", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const b = req.body || {};
+  const d = db.prepare("SELECT * FROM linkedin_drafts WHERE id=?").get(req.params.id);
+  if (!d) return res.status(404).json({ error: "no such draft" });
+  db.prepare("UPDATE linkedin_drafts SET body=COALESCE(?, body), status=COALESCE(?, status), updated_at=? WHERE id=?")
+    .run(b.body ?? null, b.status ?? null, Date.now(), req.params.id);
+  res.json(liDraftRow(db.prepare("SELECT * FROM linkedin_drafts WHERE id=?").get(req.params.id)));
+});
+
+// Re-compose a draft with a different tone.
+app.post("/api/profiles/:pid/linkedin/drafts/:id/redraft", withProfile, async (req, res) => {
+  const db = getProfileDb(req.pid);
+  const d = db.prepare("SELECT * FROM linkedin_drafts WHERE id=?").get(req.params.id);
+  if (!d) return res.status(404).json({ error: "no such draft" });
+  const row = db.prepare("SELECT * FROM linkedin_messages WHERE id=?").get(d.message_id);
+  if (!row) return res.status(404).json({ error: "no such message" });
+  try {
+    const { draft } = await liRunPipeline(db, req.pid, row, { tone: req.body?.tone || d.tone || "professional" });
+    res.json(draft);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Manual approval gate (the red arrow). Approve → ready to send (copy / optional
+// local dispatcher webhook). We never post via a LinkedIn API.
+app.post("/api/profiles/:pid/linkedin/drafts/:id/approve", withProfile, async (req, res) => {
+  const db = getProfileDb(req.pid);
+  const d = db.prepare("SELECT * FROM linkedin_drafts WHERE id=?").get(req.params.id);
+  if (!d) return res.status(404).json({ error: "no such draft" });
+  db.prepare("UPDATE linkedin_drafts SET status='approved', updated_at=? WHERE id=?").run(Date.now(), req.params.id);
+  db.prepare("UPDATE linkedin_messages SET status='reviewed', updated_at=? WHERE id=?").run(Date.now(), d.message_id);
+  liLog(db, d.message_id, "dispatcher", "draft.approved", "manual");
+  // Optional: fire the user's local dispatcher (e.g. post_reply.py behind a webhook).
+  let dispatched = false;
+  try {
+    const irow = db.prepare("SELECT data FROM integrations WHERE provider='linkedin'").get();
+    const url = irow ? (JSON.parse(irow.data || "{}").dispatcherUrl || "") : "";
+    if (url) {
+      const row = db.prepare("SELECT * FROM linkedin_messages WHERE id=?").get(d.message_id);
+      await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadUrl: row?.thread_url, sender: row?.sender, reply: d.body }) });
+      dispatched = true;
+      liLog(db, d.message_id, "dispatcher", "draft.dispatched", url);
+    }
+  } catch (e) { liLog(db, d.message_id, "dispatcher", "dispatch.error", e.message); }
+  res.json({ ok: true, reply: d.body, dispatched });
+});
+
+app.post("/api/profiles/:pid/linkedin/drafts/:id/reject", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const d = db.prepare("SELECT * FROM linkedin_drafts WHERE id=?").get(req.params.id);
+  if (!d) return res.status(404).json({ error: "no such draft" });
+  db.prepare("UPDATE linkedin_drafts SET status='rejected', updated_at=? WHERE id=?").run(Date.now(), req.params.id);
+  liLog(db, d.message_id, "dispatcher", "draft.rejected", "manual");
+  res.json({ ok: true });
+});
+
+// Demo inbox — sample inbound messages so the pipeline is testable without Selenium.
+app.post("/api/profiles/:pid/linkedin/seed-demo", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const now = Date.now();
+  const samples = [
+    { sender: "Dana Levin", headline: "Talent Partner @ Wiz", text: "Hi! I came across your profile — we're hiring a staff engineer for our data platform team. Would you be open to a quick chat this week?" },
+    { sender: "Omar Said", headline: "Founder, DataForge", text: "Loved your post on vector search. We're building something adjacent — any chance you'd be up for swapping notes?" },
+    { sender: "Recruiter Bot", headline: "—", text: "EARN $$$ FROM HOME!!! Click this link to 10x your income now!!!" },
+    { sender: "Maya Cohen", headline: "PM @ Monday", text: "Congrats on the new role! Well deserved 🎉" },
+  ];
+  let n = 0;
+  for (const s of samples) {
+    const id = uid("lim");
+    db.prepare(`INSERT INTO linkedin_messages (id, ts, sender, headline, text, status, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?)`).run(id, now - n * 3600_000, s.sender, s.headline, s.text, "new", now, now);
+    n++;
+  }
+  res.json({ ok: true, added: n });
+});
+
+// Content calendar — outbound posts.
+app.get("/api/profiles/:pid/linkedin/posts", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const rows = db.prepare("SELECT * FROM linkedin_posts ORDER BY COALESCE(scheduled_at, updated_at) DESC").all();
+  res.json({ posts: rows.map(liPostRow) });
+});
+app.post("/api/profiles/:pid/linkedin/posts", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const b = req.body || {};
+  const id = uid("lip");
+  const now = Date.now();
+  db.prepare(`INSERT INTO linkedin_posts (id, kind, template, topic, title, body, hashtags, status, scheduled_at, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, b.kind || "post", b.template || null, b.topic || null, b.title || null, b.body || "",
+      b.hashtags ? JSON.stringify(b.hashtags) : null, b.status || "idea", b.scheduledAt || null, now, now);
+  res.json(liPostRow(db.prepare("SELECT * FROM linkedin_posts WHERE id=?").get(id)));
+});
+app.patch("/api/profiles/:pid/linkedin/posts/:id", withProfile, (req, res) => {
+  const db = getProfileDb(req.pid);
+  const b = req.body || {};
+  const r = db.prepare("SELECT * FROM linkedin_posts WHERE id=?").get(req.params.id);
+  if (!r) return res.status(404).json({ error: "no such post" });
+  const postedAt = b.status === "posted" && !r.posted_at ? Date.now() : r.posted_at;
+  db.prepare(`UPDATE linkedin_posts SET title=COALESCE(?,title), body=COALESCE(?,body), topic=COALESCE(?,topic),
+      template=COALESCE(?,template), status=COALESCE(?,status), scheduled_at=?, hashtags=COALESCE(?,hashtags),
+      posted_at=?, updated_at=? WHERE id=?`)
+    .run(b.title ?? null, b.body ?? null, b.topic ?? null, b.template ?? null, b.status ?? null,
+      b.scheduledAt === undefined ? r.scheduled_at : b.scheduledAt,
+      b.hashtags ? JSON.stringify(b.hashtags) : null, postedAt, Date.now(), req.params.id);
+  res.json(liPostRow(db.prepare("SELECT * FROM linkedin_posts WHERE id=?").get(req.params.id)));
+});
+app.delete("/api/profiles/:pid/linkedin/posts/:id", withProfile, (req, res) => {
+  getProfileDb(req.pid).prepare("DELETE FROM linkedin_posts WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// AI-draft an outbound post from a template + topic, in the profile's voice.
+app.post("/api/profiles/:pid/linkedin/posts/draft", withProfile, async (req, res) => {
+  const db = getProfileDb(req.pid);
+  const b = req.body || {};
+  const { persona, default_model } = liProfileModel(req.pid);
+  const model = default_model || "claude-opus-4-8";
+  const tpl = li.allBuiltins().find((t) => t.id === b.template)
+    || db.prepare("SELECT * FROM linkedin_templates WHERE id=?").get(b.template);
+  const structure = tpl?.structure || "A strong, useful LinkedIn post.";
+  const ltm = readMemFile(req.pid, LTM_FILE).content;
+  const system =
+    "You write LinkedIn posts for the user. Respond ONLY with JSON (no code fences): " +
+    '{"title":"<3-6 word internal label>","body":"<the post text, with line breaks as \\n, no surrounding quotes>",' +
+    '"hashtags":["#tag", ...]}. ' +
+    "The body must read naturally as a LinkedIn post: scannable lines, no markdown headers, 3-8 short paragraphs. " +
+    `Follow this structure: ${structure}` +
+    (persona ? `\n\nWrite in the user's voice:\n${persona}` : "") +
+    (ltm ? `\n\nBackground on the user (for accuracy, don't dump verbatim):\n${ltm.slice(0, 1500)}` : "");
+  try {
+    const raw = await runModel(model, system, [
+      { role: "user", content: `Topic: ${b.topic || "(pick something relevant from my background)"}\n\nWrite the post.` },
+    ]);
+    let p;
+    try { p = firstJson(raw); } catch { p = { title: b.topic || "Post", body: raw.trim(), hashtags: [] }; }
+    res.json({
+      title: String(p.title || b.topic || "Post").slice(0, 80),
+      body: String(p.body || "").trim(),
+      hashtags: Array.isArray(p.hashtags) ? p.hashtags.map((h) => String(h)).slice(0, 8) : [],
+    });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
 });
 
 // Short-term memory: regenerate from the latest activity (time-relevant).

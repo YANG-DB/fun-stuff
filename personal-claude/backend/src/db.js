@@ -316,6 +316,76 @@ function migrateProfileDb(db) {
       snippet   TEXT,
       source    TEXT NOT NULL DEFAULT 'gmail'
     );
+
+    -- LinkedIn manager: inbound messages (the "Receiver" writes here).
+    CREATE TABLE IF NOT EXISTS linkedin_messages (
+      id          TEXT PRIMARY KEY,
+      ts          INTEGER,
+      sender      TEXT,
+      headline    TEXT,
+      text        TEXT NOT NULL DEFAULT '',
+      thread_url  TEXT,
+      -- Analyzer output:
+      intent      TEXT,
+      priority    TEXT,
+      urgency     TEXT,
+      sentiment   TEXT,
+      status      TEXT NOT NULL DEFAULT 'new',   -- new|analyzed|drafted|reviewed|done
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
+    -- LinkedIn manager: composed reply drafts + Validator/Auditor results.
+    CREATE TABLE IF NOT EXISTS linkedin_drafts (
+      id             TEXT PRIMARY KEY,
+      message_id     TEXT NOT NULL,
+      body           TEXT NOT NULL DEFAULT '',
+      template       TEXT,
+      tone           TEXT,
+      relevance      INTEGER,           -- Validator scores (0-100)
+      completeness   INTEGER,
+      tone_ok        INTEGER,
+      quality_score  INTEGER,           -- Auditor 0-100
+      recommendation TEXT,
+      status         TEXT NOT NULL DEFAULT 'composed', -- composed|validated|ready|approved|rejected|posted
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL
+    );
+
+    -- LinkedIn manager: outbound content calendar (posts).
+    CREATE TABLE IF NOT EXISTS linkedin_posts (
+      id           TEXT PRIMARY KEY,
+      kind         TEXT NOT NULL DEFAULT 'post',
+      template     TEXT,
+      topic        TEXT,
+      title        TEXT,
+      body         TEXT NOT NULL DEFAULT '',
+      hashtags     TEXT,
+      status       TEXT NOT NULL DEFAULT 'idea', -- idea|draft|ready|scheduled|posted
+      scheduled_at INTEGER,
+      created_at   INTEGER NOT NULL,
+      updated_at   INTEGER NOT NULL,
+      posted_at    INTEGER
+    );
+
+    -- LinkedIn manager: user-defined templates (built-ins live in code).
+    CREATE TABLE IF NOT EXISTS linkedin_templates (
+      id         TEXT PRIMARY KEY,
+      kind       TEXT NOT NULL DEFAULT 'post', -- post|reply|outreach|comment
+      name       TEXT NOT NULL,
+      structure  TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+
+    -- LinkedIn manager: append-only audit trail of pipeline events.
+    CREATE TABLE IF NOT EXISTS linkedin_audit (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts      INTEGER NOT NULL,
+      ref_id  TEXT,
+      stage   TEXT NOT NULL,
+      event   TEXT NOT NULL,
+      detail  TEXT
+    );
   `);
 
   // Upgrade DBs created before token tracking existed.
