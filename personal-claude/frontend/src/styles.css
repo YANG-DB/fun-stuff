@@ -1507,6 +1507,72 @@ select {
   opacity: 0.4;
   cursor: not-allowed;
 }
+.attach-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-radius: var(--radius-sm);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  align-self: flex-end;
+  transition: color 0.12s, background 0.12s;
+}
+.attach-btn:hover {
+  color: var(--accent);
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+.composer-attachments {
+  max-width: 740px;
+  margin: 0 auto 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.att-thumb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.att-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.att-thumb button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.msg-images img {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
 
 /* google badge on profile gate cards */
 .profile-google {
@@ -3411,6 +3477,8 @@ select {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  color: var(--text);
+  cursor: pointer;
 }
 .week-card:hover {
   border-color: var(--accent);

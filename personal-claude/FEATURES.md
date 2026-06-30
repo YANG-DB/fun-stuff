@@ -103,6 +103,14 @@ is never silently lost.
   block; the volatile date + STM blocks sit after the breakpoint so long sessions
   reuse the cached prefix.
 - **Auto-title** from the first user message; **Summarize / Memorize** refine it.
+- **Image attachments (Claude vision)** — the composer accepts images via the
+  📎 button, drag-to-pick, or paste (`image/*`, ≤5 MB each, up to 8). Thumbnails
+  preview above the input (removable) and render inline in the thread.
+  [`chatService`](frontend/src/services/chatService.ts) `toContent()` converts a
+  message with images into Anthropic content blocks
+  (`{type:"image",source:{type:"base64",media_type,data}}` + text). Stored inline
+  as base64 data URLs in `messages.images` (JSON) — no separate media files.
+  Text-only models/paths ignore the field; video is not supported.
 
 ---
 

@@ -73,6 +73,8 @@ export interface Message {
   content: string;
   ts: number;
   model?: ModelId;
+  /** Attached images as data URLs (e.g. "data:image/png;base64,…"); vision input. */
+  images?: string[];
   /** Context chips that fed this turn (auto-enrichment, §14 of idea.md). */
   contextUsed?: ContextChip[];
   /** Token usage recorded for this turn (assistant messages). */

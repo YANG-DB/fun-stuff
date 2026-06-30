@@ -326,6 +326,12 @@ function migrateProfileDb(db) {
       /* column already exists */
     }
   }
+  // Attached images (JSON array of data URLs) for vision input.
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN images TEXT");
+  } catch {
+    /* column already exists */
+  }
   // Upgrade DBs created before conversation summary metadata existed.
   for (const col of ["summary", "subject"]) {
     try {

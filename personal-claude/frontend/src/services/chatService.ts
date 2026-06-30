@@ -22,6 +22,20 @@ export type ChatEvent =
   | { type: "sources"; items: { url: string; title: string }[] }
   | { type: "done" };
 
+// Build the API content for a message: a plain string, or — when images are
+// attached — an array of Anthropic content blocks (text + image).
+function toContent(m: Message): unknown {
+  if (!m.images || m.images.length === 0) return m.content;
+  const blocks: unknown[] = [];
+  for (const url of m.images) {
+    const match = /^data:([^;]+);base64,(.*)$/.exec(url);
+    if (!match) continue;
+    blocks.push({ type: "image", source: { type: "base64", media_type: match[1], data: match[2] } });
+  }
+  if (m.content) blocks.push({ type: "text", text: m.content });
+  return blocks.length ? blocks : m.content;
+}
+
 export async function* streamChat(
   req: ChatRequest,
 ): AsyncGenerator<ChatEvent, void, unknown> {
@@ -52,7 +66,7 @@ async function* streamFromBackend(
     body: JSON.stringify({
       profileId: req.profile.id,
       model: req.model,
-      messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: req.messages.map((m) => ({ role: m.role, content: toContent(m) })),
       context: req.contextChips.filter((c) => c.kept).map((c) => ({ type: c.kind, id: c.sourceSessionId })),
       conversationId: req.conversationId,
       messageId: req.assistantMessageId,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, Sparkles, BookmarkPlus, X, ChevronDown, FileText, BellPlus, Brain, ArrowLeft, Plus, Search, Globe, ExternalLink, Loader, MessageSquare, Download, Printer, Braces } from "lucide-react";
+import { Send, Sparkles, BookmarkPlus, X, ChevronDown, FileText, BellPlus, Brain, ArrowLeft, Plus, Search, Globe, ExternalLink, Loader, MessageSquare, Download, Printer, Braces, ImagePlus } from "lucide-react";
 import { useStore } from "../store";
 import { exportConversation } from "../services/exportData";
 import { MODELS } from "../types";
@@ -31,6 +31,7 @@ export function ChatView({ conversationId, onConversationCreated, onBack }: Prop
   const [sumResult, setSumResult] = useState<{ subject: string; summary: string; topics: string[] } | null>(null);
   const [lookup, setLookup] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [images, setImages] = useState<string[]>([]); // attached images as data URLs
   // Existing summary: freshly generated → persisted column → imported note/memory.
   const existingSummary =
     sumResult?.summary ||
@@ -218,7 +219,7 @@ export function ChatView({ conversationId, onConversationCreated, onBack }: Prop
 
   async function send() {
     const text = draft.trim();
-    if (!text || sending || !activeProfile) return;
+    if ((!text && images.length === 0) || sending || !activeProfile) return;
 
     if (text.startsWith("/")) {
       setDraft("");
@@ -241,10 +242,12 @@ export function ChatView({ conversationId, onConversationCreated, onBack }: Prop
       role: "user",
       content: text,
       ts: Date.now(),
+      images: images.length ? images : undefined,
       contextUsed: keptChips.length ? keptChips : undefined,
     };
     setDraft("");
     setChips([]);
+    setImages([]);
     await store.appendMessage(convId, userMsg);
 
     const assistantMsg: Message = {
@@ -305,6 +308,8 @@ export function ChatView({ conversationId, onConversationCreated, onBack }: Prop
         chips={chips}
         setChips={setChips}
         sending={sending}
+        images={images}
+        setImages={setImages}
       />
     );
   }
@@ -495,6 +500,8 @@ export function ChatView({ conversationId, onConversationCreated, onBack }: Prop
         chips={chips}
         setChips={setChips}
         sending={sending}
+        images={images}
+        setImages={setImages}
       />
     </main>
   );
@@ -544,6 +551,15 @@ function MessageBubble({
           {message.contextUsed.length > 1 ? "s" : ""}
         </div>
       )}
+      {message.images && message.images.length > 0 && (
+        <div className="msg-images">
+          {message.images.map((src, i) => (
+            <a key={i} href={src} target="_blank" rel="noreferrer">
+              <img src={src} alt={`attachment ${i + 1}`} />
+            </a>
+          ))}
+        </div>
+      )}
       <div
         className="msg-body"
         title={onLookup ? "Right-click a word to search context & web" : undefined}
@@ -558,7 +574,7 @@ function MessageBubble({
               }
             : undefined
         }
-        dangerouslySetInnerHTML={{ __html: md(message.content || "…") }}
+        dangerouslySetInnerHTML={{ __html: md(message.content || (message.images?.length ? "" : "…")) }}
       />
       {!isUser && message.content && (
         <div className="msg-actions">
@@ -742,13 +758,24 @@ interface ComposerProps {
   chips: ContextChip[];
   setChips: React.Dispatch<React.SetStateAction<ContextChip[]>>;
   sending: boolean;
+  images: string[];
+  setImages: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
-function Composer({ draft, setDraft, onSend, chips, setChips, sending }: ComposerProps) {
+function Composer({ draft, setDraft, onSend, chips, setChips, sending, images, setImages }: ComposerProps) {
   const kept = chips.filter((c) => c.kept);
   const suggested = chips.filter((c) => !c.kept);
+  const fileRef = useRef<HTMLInputElement>(null);
   const setKept = (id: string, kept: boolean) =>
     setChips((prev) => prev.map((p) => (p.id === id ? { ...p, kept } : p)));
+  const addFiles = (files: File[]) => {
+    const imgs = files.filter((f) => f && f.type.startsWith("image/") && f.size <= 5 * 1024 * 1024);
+    for (const f of imgs.slice(0, 8 - images.length)) {
+      const r = new FileReader();
+      r.onload = () => setImages((prev) => (prev.length >= 8 ? prev : [...prev, String(r.result)]));
+      r.readAsDataURL(f);
+    }
+  };
   return (
     <div className="composer-wrap">
       {kept.length > 0 && (
@@ -783,12 +810,45 @@ function Composer({ draft, setDraft, onSend, chips, setChips, sending }: Compose
           ))}
         </div>
       )}
+      {images.length > 0 && (
+        <div className="composer-attachments">
+          {images.map((u, i) => (
+            <div className="att-thumb" key={i}>
+              <img src={u} alt="" />
+              <button onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))} aria-label="remove image">
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="composer">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            addFiles([...(e.target.files || [])]);
+            e.target.value = "";
+          }}
+        />
+        <button className="attach-btn" title="Attach image(s)" onClick={() => fileRef.current?.click()}>
+          <ImagePlus size={18} />
+        </button>
         <textarea
           value={draft}
           placeholder="Message your AI…  (Enter to send, Shift+Enter for newline)"
           rows={1}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            const imgs = [...e.clipboardData.items]
+              .filter((it) => it.type.startsWith("image/"))
+              .map((it) => it.getAsFile())
+              .filter((f): f is File => !!f);
+            if (imgs.length) addFiles(imgs);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -798,7 +858,7 @@ function Composer({ draft, setDraft, onSend, chips, setChips, sending }: Compose
         />
         <button
           className="send-btn"
-          disabled={!draft.trim() || sending}
+          disabled={(!draft.trim() && images.length === 0) || sending}
           onClick={onSend}
         >
           <Send size={16} />
@@ -818,6 +878,8 @@ function EmptyState(props: {
   chips: ContextChip[];
   setChips: React.Dispatch<React.SetStateAction<ContextChip[]>>;
   sending: boolean;
+  images: string[];
+  setImages: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
   const suggestions = useMemo(
     () => [
@@ -861,6 +923,8 @@ function EmptyState(props: {
         chips={props.chips}
         setChips={props.setChips}
         sending={props.sending}
+        images={props.images}
+        setImages={props.setImages}
       />
     </main>
   );

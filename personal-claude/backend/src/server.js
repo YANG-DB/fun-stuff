@@ -96,6 +96,7 @@ function mapMessage(row) {
     content: row.content,
     ts: row.ts,
     model: row.model ?? undefined,
+    images: row.images ? JSON.parse(row.images) : undefined,
     contextUsed: row.context_used ? JSON.parse(row.context_used) : undefined,
     inputTokens: row.input_tokens ?? 0,
     outputTokens: row.output_tokens ?? 0,
@@ -446,13 +447,14 @@ app.post("/api/profiles/:pid/conversations/:cid/messages", withProfile, (req, re
     .get(cid);
   req.db
     .prepare(
-      "INSERT INTO messages (id, conversation_id, role, content, ts, model, context_used, seq) VALUES (?,?,?,?,?,?,?,?)",
+      "INSERT INTO messages (id, conversation_id, role, content, ts, model, context_used, seq, images) VALUES (?,?,?,?,?,?,?,?,?)",
     )
     .run(
       id, cid, m.role, m.content ?? "", m.ts || Date.now(),
       m.model ?? null,
       m.contextUsed ? JSON.stringify(m.contextUsed) : null,
       seqRow.s,
+      Array.isArray(m.images) && m.images.length ? JSON.stringify(m.images) : null,
     );
   // First user message becomes the conversation title.
   const conv = req.db.prepare("SELECT title FROM conversations WHERE id=?").get(cid);
